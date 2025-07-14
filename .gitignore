@@ -1,1 +1,42 @@
+# === PYTHON ===
 venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+
+# === NODE.JS / FRONTEND ===
+# Ignore all node_modules anywhere in repo
+**/node_modules/
+
+# Ignore all build output folders (e.g., React, Next.js, etc.)
+**/build/
+
+# Yarn & npm logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env
+.env.*
+!.env.example  # allow this if you use example files
+
+# === TEST COVERAGE ===
+coverage/
+
+# === SYSTEM / TOOLING FILES ===
+.DS_Store
+Thumbs.db
+*.swp
+
+# === IDE / EDITOR ===
+.vscode/
+.idea/
+*.code-workspace
+
+# === OS GENERATED ===
+*.log
+ehthumbs.db
+Icon?
