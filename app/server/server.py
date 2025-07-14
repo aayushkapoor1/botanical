@@ -5,7 +5,7 @@ import serial
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-ser = serial.Serial('/dev/ttyUSB0', 115200, timeout=1)  
+ser = serial.Serial('/dev/ttyUSB0', 115200, timeout=1)
 
 @socketio.on('move')
 def handle_move():
