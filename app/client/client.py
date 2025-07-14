@@ -1,15 +1,14 @@
-import socketio
+# client.py
+import asyncio
+import websockets
 
-sio = socketio.Client()
+async def send_move():
+    uri = "ws://raspberrypi.local:8000"
+    async with websockets.connect(uri) as websocket:
+        print("✅ Connected to WebSocket server")
+        await websocket.send("MOVE")
+        print("📤 Sent MOVE")
+        response = await websocket.recv()
+        print(f"📥 Response: {response}")
 
-@sio.event
-def connect():
-    print("Connected to server")
-    sio.emit('move')
-    sio.disconnect()
-
-@sio.event
-def disconnect():
-    print("Disconnected from server")
-
-sio.connect('http://raspberrypi.local:8000')
+asyncio.run(send_move())
