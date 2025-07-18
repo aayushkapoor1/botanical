@@ -13,7 +13,6 @@ async def send_video(websocket):
     try:
         while True:
             ret, frame = cam.read()
-            print(ret, frame)
             if not ret:
                 continue
 
