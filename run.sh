@@ -6,7 +6,7 @@ VENV_DIR="./venv"
 PYTHON="$VENV_DIR/bin/python"
 PIP="$VENV_DIR/bin/pip"
 
-if [ "$1" = "server" ] || [ "$1" = "client" ]; then
+ensure_venv() {
   if [ ! -d "$VENV_DIR" ]; then
     echo "Creating virtual environment..."
     python3 -m venv "$VENV_DIR"
@@ -15,7 +15,7 @@ if [ "$1" = "server" ] || [ "$1" = "client" ]; then
   echo "Installing Python dependencies..."
   $PIP install --upgrade pip
   $PIP install -r app/requirements.txt
-fi
+}
 
 case "$1" in
   video_server)
@@ -29,10 +29,12 @@ case "$1" in
     $PYTHON video/client.py
     ;;
   server)
+    ensure_venv
     echo "Starting WebSocket server..."
     $PYTHON app/server/server.py
     ;;
   client)
+    ensure_venv
     echo "Running WebSocket client..."
     $PYTHON app/client/client.py
     ;;
@@ -45,8 +47,10 @@ case "$1" in
   *)
     echo "✅ Project environment ready."
     echo "Usage:"
-    echo "  ./run.sh server     # Start backend WebSocket server"
-    echo "  ./run.sh client     # Run Python WebSocket client"
-    echo "  ./run.sh frontend   # Start frontend with npm"
+    echo "  ./run.sh server         # Start backend WebSocket server"
+    echo "  ./run.sh client         # Run Python WebSocket client"
+    echo "  ./run.sh video_server   # Start video WebSocket server"
+    echo "  ./run.sh video_client   # Run video stream client"
+    echo "  ./run.sh frontend       # Start frontend with npm"
     ;;
 esac
