@@ -22,7 +22,7 @@ def connect_serial():
 
 connect_serial()
 
-async def handle_connection(websocket, path):
+async def handle_connection(websocket):
     print(f"🔌 Client connected from {websocket.remote_address}")
     try:
         async for message in websocket:
