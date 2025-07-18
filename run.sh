@@ -13,11 +13,21 @@ if [ "$1" = "server" ] || [ "$1" = "client" ]; then
   fi
 
   echo "Installing Python dependencies..."
-  $PIP install --upgrade pip 
+  $PIP install --upgrade pip
   $PIP install -r app/requirements.txt
 fi
 
 case "$1" in
+  video_server)
+    ensure_venv
+    echo "🚀 Starting video WebSocket server..."
+    $PYTHON video/server.py
+    ;;
+  video_client)
+    ensure_venv
+    echo "📺 Running video stream client..."
+    $PYTHON video/client.py
+    ;;
   server)
     echo "Starting WebSocket server..."
     $PYTHON app/server/server.py

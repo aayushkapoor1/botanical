@@ -1,3 +1,5 @@
 flask
 websockets
 pyserial
+opencv-python-headless
+numpy
