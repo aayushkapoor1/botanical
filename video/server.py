@@ -10,10 +10,6 @@ cam.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
 async def send_video(websocket, _path):
-    print("🔌 Client connected")
-    while True:
-        ret, frame = cam.read()
-        print(ret, frame)
     try:
         while True:
             ret, frame = cam.read()
@@ -33,6 +29,10 @@ async def send_video(websocket, _path):
         cam.release()
 
 async def main():
+    print("🔌 Client connected")
+    while True:
+        ret, frame = cam.read()
+        print(ret, frame)
     async with websockets.serve(send_video, "0.0.0.0", 8000):
         print("🚀 WebSocket server running at ws://0.0.0.0:8000")
         await asyncio.Future()  # run forever
