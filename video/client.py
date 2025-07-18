@@ -27,5 +27,5 @@ async def receive_video(uri):
 
 if __name__ == "__main__":
     # Replace with the IP address of your Raspberry Pi (where server is running)
-    uri = "ws://0.0.0.0:8000"
+    uri = "ws://raspberrypi.local:8000"
     asyncio.run(receive_video(uri))
