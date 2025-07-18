@@ -93,7 +93,7 @@ async def send_video(websocket) -> None:
         pass
 
 # ───────────── Per‑connection combined handler ──────────────
-async def handle_connection(websocket, path) -> None:  # path unused, but required
+async def handle_connection(websocket) -> None:
     client = websocket.remote_address
     print(f"🔌 Client connected from {client}")
 
