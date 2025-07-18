@@ -30,16 +30,6 @@ async def send_video(websocket, _path):
 
 async def main():
     print("🔌 Client connected")
-    while True:
-        ret, frame = cam.read()
-        print(ret, frame)
-        if not ret:
-            continue
-
-        ret, buffer = cv2.imencode('.jpg', frame)
-        print(ret, buffer)
-        if not ret:
-            continue
     async with websockets.serve(send_video, "0.0.0.0", 8000):
         print("🚀 WebSocket server running at ws://0.0.0.0:8000")
         await asyncio.Future()  # run forever
