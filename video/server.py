@@ -9,7 +9,7 @@ cam = cv2.VideoCapture(0)
 cam.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-async def send_video(websocket, _path):
+async def send_video(websocket):
     try:
         while True:
             ret, frame = cam.read()
