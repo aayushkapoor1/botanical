@@ -14,6 +14,7 @@ async def send_video(websocket, _path):
     try:
         while True:
             ret, frame = cam.read()
+            print(ret, frame)
             if not ret:
                 continue
 
