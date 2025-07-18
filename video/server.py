@@ -13,7 +13,7 @@ WEBSOCKET_HOST = '0.0.0.0'
 WEBSOCKET_PORT = 8000
 
 ser = None
-cam = None  # webcam
+cam = None
 
 def connect_serial():
     global ser
@@ -39,9 +39,7 @@ async def handle_control(websocket):
             response = await process_command(message)
             await websocket.send(response)
     except websockets.exceptions.ConnectionClosed:
-        print(f"❌ Control client disconnected")
-    except Exception as e:
-        print(f"🔥 Control error: {e}")
+        print("❌ Control client disconnected")
 
 async def process_command(msg: str) -> str:
     cmd = msg.strip().upper()
@@ -72,8 +70,6 @@ async def handle_video(websocket):
             await asyncio.sleep(0.05)
     except websockets.exceptions.ConnectionClosed:
         print("❌ Video client disconnected")
-    finally:
-        print("🛑 Video loop ended")
 
 async def router(websocket, path):
     if path == "/control":

@@ -1,47 +1,79 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from "react";
 
 function App() {
-  const socketRef = useRef<WebSocket | null>(null);
+  const controlSocketRef = useRef<WebSocket | null>(null);
+  const videoSocketRef = useRef<WebSocket | null>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [videoBlobUrl, setVideoBlobUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    const socket = new WebSocket("ws://raspberrypi.local:8000");
+    // Connect to control WebSocket
+    const controlSocket = new WebSocket("ws://raspberrypi.local:8000/control");
+    controlSocket.onopen = () => console.log("✅ Control WebSocket connected");
+    controlSocket.onerror = (err) => console.error("❌ Control error:", err);
+    controlSocket.onmessage = (e) => console.log("📥 Server:", e.data);
+    controlSocket.onclose = () => console.warn("⚠️ Control WebSocket closed");
+    controlSocketRef.current = controlSocket;
 
-    socket.onopen = () => {
-      console.log("✅ Connected to WebSocket server");
+    // Connect to video WebSocket
+    const videoSocket = new WebSocket("ws://raspberrypi.local:8000/video");
+    videoSocket.binaryType = "arraybuffer";
+
+    videoSocket.onopen = () => console.log("🎥 Video WebSocket connected");
+
+    videoSocket.onmessage = (event) => {
+      const blob = new Blob([event.data], { type: "image/jpeg" });
+      const url = URL.createObjectURL(blob);
+      setVideoBlobUrl(url);
+
+      // Revoke old blob URL to prevent memory leaks
+      if (imgRef.current?.src) {
+        URL.revokeObjectURL(imgRef.current.src);
+      }
     };
 
-    socket.onerror = (error) => {
-      console.error("❌ WebSocket error:", error);
-    };
+    videoSocket.onerror = (err) => console.error("❌ Video error:", err);
+    videoSocket.onclose = () => console.warn("⚠️ Video WebSocket closed");
+    videoSocketRef.current = videoSocket;
 
-    socket.onmessage = (event) => {
-      console.log("📥 Message from server:", event.data);
-    };
-
-    socket.onclose = () => {
-      console.log("❌ WebSocket closed");
-    };
-
-    socketRef.current = socket;
-
+    // Cleanup on unmount
     return () => {
-      socket.close();
+      controlSocket.close();
+      videoSocket.close();
     };
   }, []);
 
-  const sendMove = () => {
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      console.log("📤 Sending MOVE...");
-      socketRef.current.send("MOVE");
+  const sendMoveCommand = () => {
+    if (controlSocketRef.current?.readyState === WebSocket.OPEN) {
+      controlSocketRef.current.send("MOVE");
+      console.log("📤 Sent: MOVE");
     } else {
-      console.warn("⚠️ WebSocket is not open yet.");
+      console.warn("⚠️ Control socket not open");
     }
   };
 
   return (
-    <div style={{ textAlign: "center", marginTop: "50px" }}>
-      <h1>React to WebSocket</h1>
-      <button onClick={sendMove}>Send MOVE</button>
+    <div style={{ textAlign: "center", marginTop: "40px" }}>
+      <h1>🌿 Plant Bot Control Panel</h1>
+
+      <img
+        ref={imgRef}
+        src={videoBlobUrl || ""}
+        alt="Live Stream"
+        width={640}
+        height={480}
+        style={{
+          border: "2px solid black",
+          marginBottom: "20px",
+          backgroundColor: "#eee",
+        }}
+      />
+
+      <div>
+        <button onClick={sendMoveCommand} style={{ padding: "10px 20px", fontSize: "16px" }}>
+          Send MOVE
+        </button>
+      </div>
     </div>
   );
 }
