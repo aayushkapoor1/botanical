@@ -17,19 +17,21 @@ import websockets
 from websockets.exceptions import ConnectionClosed
 
 # ────────────────────────── Config ──────────────────────────
-SERIAL_PORT      = "/dev/ttyUSB0"
-SERIAL_BAUDRATE  = 115_200
+SERIAL_PORT = "/dev/ttyUSB0"
+SERIAL_BAUDRATE = 115_200
 
-WEBSOCKET_HOST   = "0.0.0.0"
-WEBSOCKET_PORT   = 8000
+WEBSOCKET_HOST = "0.0.0.0"
+WEBSOCKET_PORT = 8000
 
-CAM_FPS          = 20                  # target FPS
-CAM_WIDTH        = 640
-CAM_HEIGHT       = 480
+CAM_FPS = 20  # target FPS
+CAM_WIDTH = 640
+CAM_HEIGHT = 480
 # ────────────────────────────────────────────────────────────
 
 # Serial setup ───────────────────────────────────────────────
 ser = None
+
+
 def connect_serial() -> None:
     global ser
     try:
@@ -39,33 +41,36 @@ def connect_serial() -> None:
         print(f"❌ Serial connection failed: {e}")
         ser = None
 
+
 connect_serial()
 
 # Camera setup (single global instance) ──────────────────────
 cam = cv2.VideoCapture(0)
-cam.set(cv2.CAP_PROP_FRAME_WIDTH,  CAM_WIDTH)
+cam.set(cv2.CAP_PROP_FRAME_WIDTH, CAM_WIDTH)
 cam.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
+
 
 # ────────────────────── Command logic ───────────────────────
 async def process_command(cmd_raw: str) -> str:
-    """
-    Handle a single text command from the client and return a text response.
-    """
-    cmd = cmd_raw.strip().upper()
+    if not (ser and ser.is_open):
+        return "Serial not connected"
 
-    if cmd == "MOVE":
-        if ser and ser.is_open:
-            try:
-                ser.write(b"MOVE\n")
-                print("✅ MOVE sent to ESP32")
-                return "✅ Stepper moved"
-            except Exception as e:
-                print(f"❌ Serial write error: {e}")
-                return f"❌ Serial error: {e}"
-        else:
-            return "⚠️ Serial not connected"
+    cmd = cmd_raw.strip().upper()
+    if cmd == "UP":
+        try:
+            ser.write(b"UP\n")
+            return "Moved up"
+        except Exception as e:
+            return f"Serial error: {e}"
+    elif cmd == "DOWN":
+        try:
+            ser.write(b"DOWN\n")
+            return "Moved down"
+        except Exception as e:
+            return f"Serial error: {e}"
     else:
-        return "⚠️ Unknown command"
+        return "Unknown command"
+
 
 # ───────────────────── Video‑stream task ─────────────────────
 async def send_video(websocket) -> None:
@@ -86,11 +91,12 @@ async def send_video(websocket) -> None:
                 await asyncio.sleep(frame_interval)
                 continue
 
-            await websocket.send(buf.tobytes())        # binary frame
+            await websocket.send(buf.tobytes())  # binary frame
             await asyncio.sleep(frame_interval)
     except asyncio.CancelledError:
         # Normal cancellation when the client disconnects
         pass
+
 
 # ───────────── Per‑connection combined handler ──────────────
 async def handle_connection(websocket) -> None:
@@ -100,10 +106,10 @@ async def handle_connection(websocket) -> None:
     video_task = asyncio.create_task(send_video(websocket))
 
     try:
-        async for message in websocket:                # text messages from client
+        async for message in websocket:  # text messages from client
             print(f"📩 Received: {message}")
             response = await process_command(message)
-            await websocket.send(response)             # send back text response
+            await websocket.send(response)  # send back text response
     except ConnectionClosed:
         print(f"❌ Client disconnected: {client}")
     except Exception as e:
@@ -114,6 +120,7 @@ async def handle_connection(websocket) -> None:
             await video_task
         except asyncio.CancelledError:
             pass
+
 
 # ───────────────────── Graceful shutdown ────────────────────
 def shutdown(*_):
@@ -126,14 +133,17 @@ def shutdown(*_):
         print("📷 Camera released")
     sys.exit(0)
 
-signal.signal(signal.SIGINT,  shutdown)
+
+signal.signal(signal.SIGINT, shutdown)
 signal.signal(signal.SIGTERM, shutdown)
+
 
 # ─────────────────────────── main ───────────────────────────
 async def main() -> None:
     async with websockets.serve(handle_connection, WEBSOCKET_HOST, WEBSOCKET_PORT):
         print(f"🚀 WebSocket server running at ws://{WEBSOCKET_HOST}:{WEBSOCKET_PORT}")
         await asyncio.Future()  # run forever
+
 
 if __name__ == "__main__":
     try:
