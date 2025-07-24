@@ -1,75 +1,93 @@
 import React, { useEffect, useRef, useState } from "react";
 
+const MESSAGE_INTERVAL_MS = 100;         // adjust as needed
+
 function App() {
   const socketRef = useRef<WebSocket | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [status, setStatus] = useState<string>("Connecting…");
+  const sendTimerRef = useRef<number | null>(null); // keeps interval id
+  const [status, setStatus] = useState("Connecting…");
 
+  /* --- WebSocket setup --------------------------------------------------- */
   useEffect(() => {
     const socket = new WebSocket("ws://raspberrypi.local:8000");
-
-    // Tell the browser we want raw bytes, not strings
     socket.binaryType = "arraybuffer";
 
-    socket.onopen = () => {
-      setStatus("Connected");
-      console.log("Connected to WebSocket server");
-    };
+    socket.onopen    = () => setStatus("Connected");
+    socket.onerror   = () => setStatus("Error – see console");
+    socket.onclose   = () => setStatus("Disconnected");
 
     socket.onmessage = async (event) => {
-      // Text → command reply;  Binary → JPEG frame
       if (typeof event.data === "string") {
-        console.log("Text from server:", event.data);
-        setStatus(event.data); // show latest reply
+        setStatus(event.data);               // latest text reply
         return;
       }
 
-      // --- Binary JPEG frame ---
+      /* JPEG frame */
       try {
-        const blob = new Blob([event.data], { type: "image/jpeg" });
-        const bitmap = await createImageBitmap(blob); // HW‑decoded frame
+        const blob   = new Blob([event.data], { type: "image/jpeg" });
+        const bitmap = await createImageBitmap(blob);
 
         const canvas = canvasRef.current;
-        if (!canvas) return;
+        const ctx    = canvas?.getContext("2d");
+        if (canvas && ctx)
+          ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
 
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-
-        ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-        bitmap.close(); // free GPU memory
+        bitmap.close();
       } catch (err) {
         console.error("Frame decode error:", err);
       }
-    };
-
-    socket.onerror = (err) => {
-      console.error("WebSocket error:", err);
-      setStatus("Error – see console");
-    };
-
-    socket.onclose = () => {
-      console.log("WebSocket closed");
-      setStatus("Disconnected");
     };
 
     socketRef.current = socket;
     return () => socket.close();
   }, []);
 
-  const sendCommand = (command: string) => {
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      console.log(`Sending ${command}…`);
-      socketRef.current.send(command);
-    } else {
-      console.warn("WebSocket not open yet.");
+  /* --- hold-to-repeat helper -------------------------------------------- */
+  const startSending = (cmd: string) => {
+    const sock = socketRef.current;
+    if (!sock || sock.readyState !== WebSocket.OPEN) {
+      console.warn("WebSocket not open yet");
+      return;
+    }
+
+    // send one immediately …
+    sock.send(cmd);
+
+    // … and keep sending while held
+    sendTimerRef.current = window.setInterval(() => sock.send(cmd), MESSAGE_INTERVAL_MS);
+  };
+
+  const stopSending = () => {
+    if (sendTimerRef.current !== null) {
+      clearInterval(sendTimerRef.current);
+      sendTimerRef.current = null;
     }
   };
 
+  /* --- UI ---------------------------------------------------------------- */
+  const btnStyle: React.CSSProperties = {
+    fontSize: 18,
+    padding: "6px 18px",
+    margin: 4,
+    width: 100,
+  };
+
+  // helper to wire up press + release handlers
+  const holdProps = (cmd: string) => ({
+    onMouseDown: () => startSending(cmd),
+    onMouseUp: stopSending,
+    onMouseLeave: stopSending,
+    onTouchStart: (e: React.TouchEvent) => {
+      e.preventDefault();     // avoid double-fire on mobile
+      startSending(cmd);
+    },
+    onTouchEnd: stopSending,
+  });
+
   return (
     <div style={{ textAlign: "center", marginTop: 32 }}>
-      <h1>React × WebSocket Video Demo</h1>
-
-      {/* live status / command replies */}
+      <h1>React × WebSocket Video Demo</h1>
       <p>{status}</p>
 
       <canvas
@@ -83,20 +101,14 @@ function App() {
         }}
       />
 
-      <div style={{ marginTop: 16, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-        <button onClick={() => sendCommand("UP")} style={{ fontSize: 18, padding: "6px 18px", width: 120 }}>
-          Up
-        </button>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={() => sendCommand("LEFT")} style={{ fontSize: 18, padding: "6px 18px", width: 120 }}>
-            Left
-          </button>
-          <button onClick={() => sendCommand("DOWN")} style={{ fontSize: 18, padding: "6px 18px", width: 120 }}>
-            Down
-          </button>
-          <button onClick={() => sendCommand("RIGHT")} style={{ fontSize: 18, padding: "6px 18px", width: 120 }}>
-            Right
-          </button>
+      <div style={{ marginTop: 16 }}>
+        <div>
+          <button style={btnStyle} {...holdProps("UP")}>Up</button>
+        </div>
+        <div>
+          <button style={btnStyle} {...holdProps("LEFT")}>Left</button>
+          <button style={btnStyle} {...holdProps("DOWN")}>Down</button>
+          <button style={btnStyle} {...holdProps("RIGHT")}>Right</button>
         </div>
       </div>
     </div>
