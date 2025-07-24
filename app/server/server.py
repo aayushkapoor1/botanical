@@ -70,13 +70,13 @@ async def process_command(cmd_raw: str) -> str:
             return f"Serial error: {e}"
     elif cmd == "LEFT":
         try:
-            ser.write(b"UP\n")
+            ser.write(b"LEFT\n")
             return "Moved left"
         except Exception as e:
             return f"Serial error: {e}"
     elif cmd == "RIGHT":
         try:
-            ser.write(b"DOWN\n")
+            ser.write(b"RIGHT\n")
             return "Moved down"
         except Exception as e:
             return f"Serial error: {e}"
