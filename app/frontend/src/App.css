@@ -1,38 +1,93 @@
+:root {
+  --bg-light: #f0f5f0;
+  --text-dark: #2e4a2c;
+  --accent: #4b7b5f;
+  --accent-hover: #5f896e;
+  --btn-text: #ffffff;
+  --canvas-bg: #000000;
+}
+
 .App {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   text-align: center;
-}
-
-.App-logo {
-  height: 40vmin;
-  pointer-events: none;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .App-logo {
-    animation: App-logo-spin infinite 20s linear;
-  }
+  color: var(--text-dark);
+  background: var(--bg-light);
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
 }
 
 .App-header {
-  background-color: #282c34;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  font-size: calc(10px + 2vmin);
-  color: white;
+  padding: 2rem;
 }
 
-.App-link {
-  color: #61dafb;
+h1 {
+  margin: 0 0 1rem;
+  font-size: 2.5rem;
+  color: var(--accent);
 }
 
-@keyframes App-logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+.status {
+  margin-bottom: 1.5rem;
+  font-size: 1rem;
+  opacity: 0.8;
+}
+
+canvas {
+  width: 640px;
+  height: 480px;
+  background: var(--canvas-bg);
+  border-radius: 8px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+  transition: transform 0.3s;
+}
+
+
+.controls-diamond {
+  position: relative;
+  width: 180px;
+  height: 180px;
+  margin: 2rem auto 0;
+}
+
+.control-button {
+  position: absolute;
+  width: 60px;
+  height: 60px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--btn-text);
+  font-size: 1rem;
+  cursor: pointer;
+  user-select: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  transition: background 0.3s, box-shadow 0.2s;
+}
+
+/* Hover & active states */
+.control-button:hover {
+  background: var(--accent-hover);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+}
+.control-button:active {
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+/* Diamond positions */
+.control-button.up {
+  top: 0;
+  left: calc(50% - 30px);
+}
+.control-button.down {
+  bottom: 0;
+  left: calc(50% - 30px);
+}
+.control-button.left {
+  top: calc(50% - 30px);
+  left: 0;
+}
+.control-button.right {
+  top: calc(50% - 30px);
+  right: 0;
 }
