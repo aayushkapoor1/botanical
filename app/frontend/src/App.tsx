@@ -28,9 +28,7 @@ function App() {
         const bitmap = await createImageBitmap(blob);
         const canvas = canvasRef.current;
         const ctx = canvas?.getContext("2d");
-        if (canvas && ctx) {
-          ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-        }
+        if (canvas && ctx) ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
         bitmap.close();
       } catch (err) {
         console.error("Frame decode error:", err);
@@ -44,15 +42,9 @@ function App() {
   /* --- hold-to-repeat helper -------------------------------------------- */
   const startSending = (cmd: string) => {
     const sock = socketRef.current;
-    if (!sock || sock.readyState !== WebSocket.OPEN) {
-      console.warn("WebSocket not open yet");
-      return;
-    }
+    if (!sock || sock.readyState !== WebSocket.OPEN) return;
     sock.send(cmd);
-    sendTimerRef.current = window.setInterval(
-      () => sock.send(cmd),
-      MESSAGE_INTERVAL_MS
-    );
+    sendTimerRef.current = window.setInterval(() => sock.send(cmd), MESSAGE_INTERVAL_MS);
   };
 
   const stopSending = () => {
@@ -61,6 +53,39 @@ function App() {
       sendTimerRef.current = null;
     }
   };
+
+  /* --- keyboard controls (prevent default scroll) ------------------------ */
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat) return;
+      switch (e.key) {
+        case "ArrowUp":
+        case "ArrowDown":
+        case "ArrowLeft":
+        case "ArrowRight":
+          e.preventDefault();  // **stop page scroll**
+          startSending(e.key.replace("Arrow", "").toUpperCase());
+          break;
+        default:
+          return;
+      }
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (
+        ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)
+      ) {
+        e.preventDefault();  // also prevent any leftover scroll
+        stopSending();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, []);
 
   /* --- UI helper -------------------------------------------------------- */
   const holdProps = (cmd: string) => ({
@@ -80,11 +105,7 @@ function App() {
         <h1>Plant Control Demo</h1>
         <p className="status">{status}</p>
 
-        <canvas
-          ref={canvasRef}
-          width={640}
-          height={480}
-        />
+        <canvas ref={canvasRef} width={640} height={480} />
 
         <div className="controls-diamond">
           <button className="control-button up"    {...holdProps("UP")}>Up</button>
