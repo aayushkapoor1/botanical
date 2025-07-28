@@ -5,9 +5,9 @@ constexpr int DIR_PIN_X  = 19;
 constexpr int STEP_PIN_Y = 22;   // Motor Y (new suggestion)
 constexpr int DIR_PIN_Y  = 23;
 
-constexpr uint32_t STEP_FREQ_HZ = 7000; // steps/sec
+constexpr uint32_t STEP_FREQ_HZ = 20000; // steps/sec
 constexpr uint32_t PERIOD_US    = 1'000'000UL / STEP_FREQ_HZ;
-constexpr uint32_t PULSE_US     = 100;
+constexpr uint32_t PULSE_US     = 25;
 constexpr uint32_t RUN_TIME_MS  = 100;   // MOVE duration
 constexpr uint32_t STARTUP_RUN_MS = 1000;
 
