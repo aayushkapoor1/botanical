@@ -44,10 +44,25 @@ def connect_serial() -> None:
 
 connect_serial()
 
-# Camera setup (single global instance) ──────────────────────
-cam = cv2.VideoCapture(0)
+
+def find_working_camera(max_index=10):
+    for i in range(max_index):
+        cap = cv2.VideoCapture(i)
+        if cap.isOpened():
+            cap.release()
+            return i
+    return None
+
+cam_index = find_working_camera()
+if cam_index is None:
+    print("❌ No working camera found")
+    sys.exit(1)
+
+cam = cv2.VideoCapture(cam_index)
 cam.set(cv2.CAP_PROP_FRAME_WIDTH, CAM_WIDTH)
 cam.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
+print(f"📷 Using camera at index {cam_index}")
+
 
 
 # ────────────────────── Command logic ───────────────────────

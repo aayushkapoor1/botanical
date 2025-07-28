@@ -1,3 +1,4 @@
 flask
 websockets
 pyserial
+opencv-python
