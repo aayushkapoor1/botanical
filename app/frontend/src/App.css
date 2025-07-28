@@ -42,13 +42,20 @@ canvas {
   transition: transform 0.3s;
 }
 
+/* Control layout */
+.control-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 2rem;
+}
 
 .controls-diamond {
   position: relative;
   width: 180px;
-  height: 180px;
-  margin: 2rem auto 0;
+  height: 180px; /* ✅ Ensures consistent alignment */
 }
+
 
 .control-button {
   position: absolute;
@@ -65,29 +72,75 @@ canvas {
   transition: background 0.3s, box-shadow 0.2s;
 }
 
-/* Hover & active states */
 .control-button:hover {
   background: var(--accent-hover);
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
 }
+
 .control-button:active {
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
 }
 
-/* Diamond positions */
 .control-button.up {
   top: 0;
   left: calc(50% - 30px);
 }
+
 .control-button.down {
   bottom: 0;
   left: calc(50% - 30px);
 }
+
 .control-button.left {
   top: calc(50% - 30px);
   left: 0;
 }
+
 .control-button.right {
   top: calc(50% - 30px);
   right: 0;
+}
+
+.control-panel-horizontal {
+  display: flex;
+  justify-content: center;
+  align-items: center; /* ✅ Vertically aligns water section to the diamond */
+  gap: 3rem;
+  margin-top: 2rem;
+}
+
+
+.water-section-inline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  height: 180px; /* Match .controls-diamond */
+  padding-top: 30px; /* 👈 Push the button downward to align with the right button */
+}
+
+.water-label {
+  margin-bottom: 0.5rem;
+  font-weight: bold;
+  font-size: 1rem;
+  text-align: center;
+}
+
+.control-button.water {
+  position: static;
+  padding: 12px 24px;
+  border-radius: 12px;
+  background-color: #74b9ff;
+  color: #ffffff;
+  font-size: 1.1rem;
+  border: none;
+  cursor: not-allowed;
+  opacity: 0.7;
+  user-select: none;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
 }

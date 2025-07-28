@@ -63,7 +63,7 @@ function App() {
         case "ArrowDown":
         case "ArrowLeft":
         case "ArrowRight":
-          e.preventDefault();  // **stop page scroll**
+          e.preventDefault();  // stop page scroll
           startSending(e.key.replace("Arrow", "").toUpperCase());
           break;
         default:
@@ -74,7 +74,7 @@ function App() {
       if (
         ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)
       ) {
-        e.preventDefault();  // also prevent any leftover scroll
+        e.preventDefault();
         stopSending();
       }
     };
@@ -107,11 +107,18 @@ function App() {
 
         <canvas ref={canvasRef} width={640} height={480} />
 
-        <div className="controls-diamond">
-          <button className="control-button up"    {...holdProps("UP")}>Up</button>
-          <button className="control-button left"  {...holdProps("LEFT")}>Left</button>
-          <button className="control-button right" {...holdProps("RIGHT")}>Right</button>
-          <button className="control-button down"  {...holdProps("DOWN")}>Down</button>
+        <div className="control-panel-horizontal">
+          <div className="controls-diamond">
+            <button className="control-button up" {...holdProps("UP")}>Up</button>
+            <button className="control-button left" {...holdProps("LEFT")}>Left</button>
+            <button className="control-button right" {...holdProps("RIGHT")}>Right</button>
+            <button className="control-button down" {...holdProps("DOWN")}>Down</button>
+          </div>
+
+          <div className="water-section-inline">
+            <p className="water-label">“Water” button (for display only)</p>
+            <button className="control-button water" disabled>Water</button>
+          </div>
         </div>
       </header>
     </div>
