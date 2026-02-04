@@ -1,63 +1,55 @@
-// ------------------- Pin / Motion Config -------------------
-constexpr int STEP_PIN_X = 18;   // Motor X (existing)
-constexpr int DIR_PIN_X  = 19;
+#include <AccelStepper.h>
 
-constexpr int STEP_PIN_Y = 22;   // Motor Y (new suggestion)
-constexpr int DIR_PIN_Y  = 23;
+// --- PIN CONFIGURATION ---
+#define STEP_PIN 23
+#define DIR_PIN  22
 
-constexpr uint32_t STEP_FREQ_HZ = 20000; // steps/sec
-constexpr uint32_t PERIOD_US    = 1'000'000UL / STEP_FREQ_HZ;
-constexpr uint32_t PULSE_US     = 25;
-constexpr uint32_t RUN_TIME_MS  = 100;   // MOVE duration
-constexpr uint32_t STARTUP_RUN_MS = 1000;
+// --- MOTOR CONFIGURATION ---
+// Set this to match your DM542 DIP switch setting (e.g., 400, 800, 1600)
+const int STEPS_PER_REV = 800; 
 
-// ------------------- Helpers -------------------
-void runStepperFor(uint32_t duration_ms, bool direction, int stepPin, int dirPin) {
-  digitalWrite(dirPin, direction); // 0 = CW, 1 = CCW (adapt as needed for your wiring)
+// --- MOTION SETTINGS (The ones you want to play with) ---
+float targetRevolutions = 2.0;    // How many turns to make
+int motorMaxSpeed       = 2000;   // Top speed (steps/sec) - 4000 is ~300 RPM @ 800 steps/rev
+int motorAcceleration   = 1500;   // How fast it gets to top speed (steps/sec^2)
+int millisBetweenMoves  = 3000;   // Pause time at each end (milliseconds)
 
-  uint32_t t0 = millis();
-  while (millis() - t0 < duration_ms) {
-    digitalWrite(stepPin, HIGH);
-    delayMicroseconds(PULSE_US);
-    digitalWrite(stepPin, LOW);
-    delayMicroseconds(PERIOD_US - PULSE_US);
-  }
-}
+// --- INITIALIZE ---
+AccelStepper stepper(AccelStepper::DRIVER, STEP_PIN, DIR_PIN);
+
+// Calculate total steps needed
+long targetSteps = (long)(targetRevolutions * STEPS_PER_REV);
 
 void setup() {
   Serial.begin(115200);
-  while (!Serial) { ; }
-
-  pinMode(STEP_PIN_X, OUTPUT);
-  pinMode(DIR_PIN_X,  OUTPUT);
-  pinMode(STEP_PIN_Y, OUTPUT);
-  pinMode(DIR_PIN_Y,  OUTPUT);
-
-  Serial.println("Startup: moving X axis CCW for 1 second...");
-  runStepperFor(STARTUP_RUN_MS, true,  STEP_PIN_X, DIR_PIN_X);   // X CCW
-
-  Serial.println("Startup: moving Y axis CW for 1 second...");
-  runStepperFor(STARTUP_RUN_MS, false, STEP_PIN_Y, DIR_PIN_Y);   // Y CW
-
-  Serial.println("Ready for commands: UP, DOWN, LEFT, RIGHT");
+  
+  // Apply your configurations
+  stepper.setMaxSpeed(motorMaxSpeed);
+  stepper.setAcceleration(motorAcceleration);
+  
+  // Set the first target
+  stepper.moveTo(targetSteps);
+  
+  Serial.println("--- Stepper Configured ---");
+  Serial.print("Target Steps: "); Serial.println(targetSteps);
 }
 
-
 void loop() {
-  if (Serial.available()) {
-    String command = Serial.readStringUntil('\n');
-    command.trim();  // remove CR/LF
-
-    if (command == "UP") {
-      runStepperFor(RUN_TIME_MS, false, STEP_PIN_X, DIR_PIN_X);  // X CW
-    } else if (command == "DOWN") {
-      runStepperFor(RUN_TIME_MS, true,  STEP_PIN_X, DIR_PIN_X);  // X CCW
-    } else if (command == "LEFT") {
-      runStepperFor(RUN_TIME_MS, true, STEP_PIN_Y, DIR_PIN_Y);  // Y CW
-    } else if (command == "RIGHT") {
-      runStepperFor(RUN_TIME_MS, false,  STEP_PIN_Y, DIR_PIN_Y);  // Y CCW
+  // Check if motor reached the destination
+  if (stepper.distanceToGo() == 0) {
+    Serial.println("Target reached. Pausing...");
+    delay(millisBetweenMoves);
+    
+    // Switch direction: If at target, go to 0. If at 0, go to target.
+    if (stepper.currentPosition() == 0) {
+      stepper.moveTo(targetSteps);
     } else {
-      Serial.println("Unknown command. Use: UP, DOWN, LEFT, RIGHT");
+      stepper.moveTo(0);
     }
+    
+    Serial.println("Moving to next position...");
   }
+
+  // This must run constantly to generate pulses
+  stepper.run();
 }
