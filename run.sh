@@ -6,7 +6,7 @@ VENV_DIR="./venv"
 PYTHON="$VENV_DIR/bin/python"
 PIP="$VENV_DIR/bin/pip"
 
-if [ "$1" = "server" ] || [ "$1" = "client" ]; then
+if [ "$1" = "server" ] || [ "$1" = "client" ] || [ "$1" = "wifi" ]; then
   if [ ! -d "$VENV_DIR" ]; then
     echo "Creating virtual environment..."
     python3 -m venv "$VENV_DIR"
@@ -26,6 +26,10 @@ case "$1" in
     echo "Running WebSocket client..."
     $PYTHON app/client/client.py
     ;;
+  wifi)
+    echo "Starting WiFi/ESP32 comms (MQTT bridge)..."
+    $PYTHON app/server/comms.py
+    ;;
   frontend)
     echo "Starting frontend..."
     cd app/frontend
@@ -37,6 +41,7 @@ case "$1" in
     echo "Usage:"
     echo "  ./run.sh server     # Start backend WebSocket server"
     echo "  ./run.sh client     # Run Python WebSocket client"
+    echo "  ./run.sh wifi       # Test ESP32 ↔ Pi MQTT comms (comms.py)"
     echo "  ./run.sh frontend   # Start frontend with npm"
     ;;
 esac

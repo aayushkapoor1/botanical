@@ -95,6 +95,15 @@ async def process_command(cmd_raw: str) -> str:
             return "Moved right"
         except Exception as e:
             return f"Serial error: {e}"
+    elif cmd == "CALIBRATE":
+        print("CALIBRATE")
+        # ESP32 connection not set up yet – placeholder
+        return "Calibrate received"
+    elif cmd == "WATER_ALL":
+        print("WATER_ALL (unimplemented)")
+        # Water-all routine not set up yet – placeholder
+        # When implemented, return "Water all complete" to update the calendar
+        return "Water all – unimplemented"
     else:
         return "Unknown command"
 

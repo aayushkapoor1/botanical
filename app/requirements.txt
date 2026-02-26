@@ -2,3 +2,5 @@ flask
 websockets
 pyserial
 opencv-python
+paho-mqtt
+aiomqtt
