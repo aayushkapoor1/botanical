@@ -51,6 +51,9 @@ MODEL_NAME = "yolov8n.pt"
 POTTED_PLANT_CLASS = 58
 CONF_THRES = 0.35
 
+# --- Digital zoom (1.0 = no zoom, 2.0 = 2x center crop, etc.) ---
+ZOOM = 1.5
+
 # --- Vision debouncing ---
 # We require ON_HITS consecutive frames where a plant is detected
 # before we trigger "NEW PLANT FOUND".
@@ -62,6 +65,20 @@ OFF_MISSES = 6
 
 # After we trigger once, we wait COOLDOWN_S seconds before allowing another trigger.
 COOLDOWN_S = 1.5
+
+
+# ============================================================
+# DIGITAL ZOOM
+# ============================================================
+
+def digital_zoom(frame, zoom=1.0):
+    if zoom <= 1.0:
+        return frame
+    h, w = frame.shape[:2]
+    new_w, new_h = int(w / zoom), int(h / zoom)
+    x1, y1 = (w - new_w) // 2, (h - new_h) // 2
+    crop = frame[y1:y1 + new_h, x1:x1 + new_w]
+    return cv2.resize(crop, (w, h), interpolation=cv2.INTER_LINEAR)
 
 
 # ============================================================
@@ -234,8 +251,9 @@ def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = Tru
     while time.time() - t0 < duration_s:
         ok, frame = cap.read()
         if not ok:
-            # If camera read fails, treat as no detection
             return False
+
+        frame = digital_zoom(frame, ZOOM)
 
         # Run YOLO detection for only the "potted plant" class.
         # verbose=False reduces console spam.
