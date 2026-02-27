@@ -33,18 +33,18 @@ SERIAL_PORT = None
 
 # --- Scan grid ---
 # The raster scan will visit ROWS x COLS "cells".
-COLS = 9
-ROWS = 9
+COLS = 5
+ROWS = 5
 
 # Step size between cells in mm (the ESP converts mm to steps)
-STEP_X_MM = 50.0
-STEP_Y_MM = 50.0
+STEP_X_MM = 75.0
+STEP_Y_MM = 75.0
 
 # --- How long we sit and look at each cell ---
 DWELL_S = 1.0
 
 # --- Watering duration ---
-WATER_MS = 1500
+WATER_MS = 5000
 
 # --- YOLO model settings ---
 MODEL_NAME = "yolov8n.pt"
