@@ -4,3 +4,4 @@ pyserial
 opencv-python
 paho-mqtt
 aiomqtt
+pyserial

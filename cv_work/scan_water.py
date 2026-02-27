@@ -344,7 +344,7 @@ def main():
                 print(f"[SCAN] At cell row={r}, col={c} (looking...)")
 
                 # Look for DWELL_S seconds at this cell
-                found = detect_plant_for_duration(cap, model, DWELL_S, show_ui=True)
+                found = detect_plant_for_duration(cap, model, DWELL_S, show_ui=False)
 
                 # If a plant is found, water here
                 if found:
