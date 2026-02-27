@@ -33,8 +33,8 @@ SERIAL_PORT = None
 
 # --- Scan grid ---
 # The raster scan will visit ROWS x COLS "cells".
-COLS = 6
-ROWS = 4
+COLS = 9
+ROWS = 9
 
 # Step size between cells in mm (the ESP converts mm to steps)
 STEP_X_MM = 50.0
