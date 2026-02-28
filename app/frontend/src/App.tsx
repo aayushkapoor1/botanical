@@ -67,6 +67,7 @@ function App() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [wateredDates, setWateredDates] = useState<Record<string, string>>({});
   const [waterAllState, setWaterAllState] = useState<"idle" | "watering" | "complete">("idle");
+  const [scanStatus, setScanStatus] = useState("");
   const [debugMode, setDebugMode] = useState(false);
   const [mockCurrentDate, setMockCurrentDate] = useState<string | null>(null);
   const statusClickCountRef = useRef(0);
@@ -103,23 +104,11 @@ function App() {
     }
   };
 
-  /* --- Water-all mock: 10s completion ------------------------------------ */
-  useEffect(() => {
-    if (waterAllState !== "watering") return;
-    const timeout = window.setTimeout(() => {
-      const dateKey = todayKeyRef.current;
-      const now = new Date();
-      const timeStr = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
-      setWateredDates((prev) => ({ ...prev, [dateKey]: timeStr }));
-      setWaterAllState("complete");
-      setTimeout(() => setWaterAllState("idle"), 1500);
-    }, 10000);
-    return () => clearTimeout(timeout);
-  }, [waterAllState]);
+  /* waterAllState transitions are now driven by WebSocket messages from the server */
 
   /* --- WebSocket setup --------------------------------------------------- */
   useEffect(() => {
-    const socket = new WebSocket("ws://raspberrypi.local:8000");
+    const socket = new WebSocket("ws://10.40.227.209:8000");
     socket.binaryType = "arraybuffer";
 
     socket.onopen = () => setStatus("Connected");
@@ -128,14 +117,27 @@ function App() {
 
     socket.onmessage = async (event) => {
       if (typeof event.data === "string") {
-        setStatus(event.data);
-        const msg = event.data.toLowerCase();
-        if (msg.includes("complete") && !msg.includes("unimplemented")) {
+        const msg = event.data;
+        const msgLower = msg.toLowerCase();
+
+        if (msg.startsWith("[SCAN]")) {
+          setScanStatus(msg.replace(/^\[SCAN]\s*/, ""));
+        }
+
+        if (msgLower === "water all complete") {
           const dateKey = todayKeyRef.current;
           const now = new Date();
           const timeStr = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
           setWateredDates((prev) => ({ ...prev, [dateKey]: timeStr }));
+          setWaterAllState("complete");
+          setScanStatus("");
+          setTimeout(() => setWaterAllState("idle"), 2000);
+        } else if (msgLower.includes("scan cancelled") || msgLower.includes("scan error")) {
+          setWaterAllState("idle");
+          setScanStatus("");
         }
+
+        setStatus(msg);
         return;
       }
       try {
@@ -311,23 +313,27 @@ function App() {
               <span className="action-hint">Water (manual control, unimplemented)</span>
               <button
                 className={`action-btn action-btn--water-all ${waterAllState !== "idle" ? "action-btn--water-all-active" : ""}`}
-                title={waterAllState === "watering" ? "Cancel watering" : "Starts the water-all-plants routine"}
+                title={waterAllState === "watering" ? "Cancel scan" : "Starts the scan-and-water routine"}
                 onClick={() => {
                   if (waterAllState === "watering") {
-                    setWaterAllState("idle");
+                    const sock = socketRef.current;
+                    if (sock && sock.readyState === WebSocket.OPEN) sock.send("CANCEL_SCAN");
                     return;
                   }
                   if (waterAllState !== "idle") return;
                   setWaterAllState("watering");
+                  setScanStatus("");
                   const sock = socketRef.current;
                   if (sock && sock.readyState === WebSocket.OPEN) sock.send("WATER_ALL");
                 }}
               >
                 {waterAllState === "idle" && "Water all plants"}
-                {waterAllState === "watering" && "Click to cancel"}
+                {waterAllState === "watering" && "Cancel scan"}
                 {waterAllState === "complete" && "Done!"}
               </button>
-              <span className="action-hint action-hint--unimplemented">Unimplemented</span>
+              {waterAllState === "watering" && scanStatus && (
+                <span className="scan-progress">{scanStatus}</span>
+              )}
             </div>
           </div>
         </section>

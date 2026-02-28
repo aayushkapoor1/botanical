@@ -962,3 +962,19 @@ button.status-badge {
   font-weight: 500;
   color: var(--color-text);
 }
+
+/* ─── Scan progress ───────────────────────────────── */
+
+.scan-progress {
+  display: block;
+  margin-top: 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  animation: scan-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes scan-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
