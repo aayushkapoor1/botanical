@@ -32,7 +32,8 @@ CAM_FPS = 20
 CAM_WIDTH = 640
 CAM_HEIGHT = 480
 
-JOG_STEP_MM = 20.0  # mm per manual direction press
+JOG_STEP_MM = 50.0   # mm per manual direction press
+JPEG_QUALITY = 50    # 1-100, lower = smaller/faster, higher = sharper
 # ────────────────────────────────────────────────────────────
 
 # ──────────────── Scanning support (import cv_work) ─────────
@@ -70,7 +71,7 @@ ser = None
 def connect_serial() -> None:
     global ser
     try:
-        ser = serial.Serial(SERIAL_PORT, SERIAL_BAUDRATE, timeout=1)
+        ser = serial.Serial(SERIAL_PORT, SERIAL_BAUDRATE, timeout=0.1)
         print(f"[INIT] Serial connected on {SERIAL_PORT}")
     except Exception as e:
         print(f"[INIT] Serial connection failed: {e}")
@@ -154,7 +155,7 @@ async def process_command(cmd_raw: str) -> str:
 def _on_scan_frame(frame) -> None:
     """Called from the scan thread with each camera frame (numpy array).
     Encode to JPEG and drop into the buffer so send_video can forward it."""
-    ok, buf = cv2.imencode(".jpg", frame)
+    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
     if not ok:
         return
     jpg_bytes = buf.tobytes()
@@ -246,7 +247,8 @@ async def send_video(websocket) -> None:
                 await asyncio.sleep(frame_interval)
                 continue
 
-            ok, buf = cv2.imencode(".jpg", frame)
+            ok, buf = cv2.imencode(".jpg", frame,
+                                    [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
             if not ok:
                 await asyncio.sleep(frame_interval)
                 continue

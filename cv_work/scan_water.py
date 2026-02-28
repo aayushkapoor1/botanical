@@ -310,7 +310,7 @@ def run_scan(ser, cap, model, progress_callback=None, cancel_event=None,
         dict with keys 'cells_scanned', 'plants_found', 'cancelled', 'error'.
     """
     original_timeout = ser.timeout
-    ser.timeout = 0.1
+    ser.timeout = 0.1  # fast polling for ESP responses
 
     def report(msg):
         print(msg)
