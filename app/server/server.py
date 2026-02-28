@@ -13,7 +13,6 @@ import asyncio
 import cv2
 import functools
 import os
-import queue
 import serial
 import signal
 import sys
@@ -33,7 +32,7 @@ CAM_WIDTH = 640
 CAM_HEIGHT = 480
 
 JOG_STEP_MM = 50.0   # mm per manual direction press
-JPEG_QUALITY = 50    # 1-100, lower = smaller/faster, higher = sharper
+JPEG_QUALITY = 50     # 1-100, lower = smaller/faster, higher = sharper
 # ────────────────────────────────────────────────────────────
 
 # ──────────────── Scanning support (import cv_work) ─────────
@@ -60,10 +59,6 @@ scan_in_progress = False
 scan_cancel = threading.Event()
 move_in_progress = False
 
-# During scanning, the scan thread writes JPEG bytes here so the
-# video-stream task can keep sending frames to the frontend.
-scan_frame_buffer: queue.Queue[bytes] = queue.Queue(maxsize=2)
-
 # ─────────────────── Serial setup ───────────────────────────
 ser = None
 
@@ -80,9 +75,45 @@ def connect_serial() -> None:
 
 connect_serial()
 
+
+# ─────────────────── Threaded camera ────────────────────────
+class ThreadedCamera:
+    """Wraps cv2.VideoCapture with a background reader thread.
+    read() always returns the latest frame instantly, so multiple
+    consumers (video stream + scan) can share the camera safely."""
+
+    def __init__(self, cap):
+        self._cap = cap
+        self._frame = None
+        self._ok = False
+        self._lock = threading.Lock()
+        self._running = True
+        self._thread = threading.Thread(target=self._reader, daemon=True)
+        self._thread.start()
+
+    def _reader(self):
+        while self._running:
+            ok, frame = self._cap.read()
+            with self._lock:
+                self._ok = ok
+                self._frame = frame
+
+    def read(self):
+        with self._lock:
+            if self._frame is None:
+                return False, None
+            return self._ok, self._frame.copy()
+
+    def release(self):
+        self._running = False
+        self._thread.join(timeout=2.0)
+        self._cap.release()
+
+    def isOpened(self):
+        return self._cap.isOpened()
+
+
 # ─────────────────── Camera setup ───────────────────────────
-
-
 def find_working_camera(max_index=10):
     for i in range(max_index):
         cap = cv2.VideoCapture(i)
@@ -97,9 +128,10 @@ if cam_index is None:
     print("[INIT] No working camera found")
     sys.exit(1)
 
-cam = cv2.VideoCapture(cam_index)
-cam.set(cv2.CAP_PROP_FRAME_WIDTH, CAM_WIDTH)
-cam.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
+_raw_cam = cv2.VideoCapture(cam_index)
+_raw_cam.set(cv2.CAP_PROP_FRAME_WIDTH, CAM_WIDTH)
+_raw_cam.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
+cam = ThreadedCamera(_raw_cam)
 print(f"[INIT] Using camera at index {cam_index}")
 
 
@@ -152,26 +184,9 @@ async def process_command(cmd_raw: str) -> str:
 
 
 # ──────────────────── Scan execution ────────────────────────
-def _on_scan_frame(frame) -> None:
-    """Called from the scan thread with each camera frame (numpy array).
-    Encode to JPEG and drop into the buffer so send_video can forward it."""
-    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
-    if not ok:
-        return
-    jpg_bytes = buf.tobytes()
-    try:
-        scan_frame_buffer.put_nowait(jpg_bytes)
-    except queue.Full:
-        try:
-            scan_frame_buffer.get_nowait()
-        except queue.Empty:
-            pass
-        scan_frame_buffer.put_nowait(jpg_bytes)
-
-
 async def execute_scan(websocket) -> None:
     """Run the full scan-and-water routine in a background thread,
-    forwarding progress messages and video frames to the client."""
+    forwarding progress messages to the client over WebSocket."""
     global scan_in_progress
     scan_in_progress = True
     scan_cancel.clear()
@@ -182,15 +197,11 @@ async def execute_scan(websocket) -> None:
     def on_progress(msg: str):
         loop.call_soon_threadsafe(progress_queue.put_nowait, msg)
 
-    # Let the video loop notice the flag and stop touching the camera
-    await asyncio.sleep(0.2)
-
     try:
         scan_fn = functools.partial(
             run_scan, ser, cam, model,
             progress_callback=on_progress,
             cancel_event=scan_cancel,
-            frame_callback=_on_scan_frame,
         )
         scan_future = loop.run_in_executor(None, scan_fn)
 
@@ -227,23 +238,13 @@ async def execute_scan(websocket) -> None:
 
 # ───────────────────── Video-stream task ─────────────────────
 async def send_video(websocket) -> None:
-    """Continuously push JPEG frames to the client.
-    During scanning, frames come from the scan thread's frame buffer
-    instead of reading the camera directly."""
+    """Continuously grab the latest frame and push it to the client.
+    Works at all times — normal operation, manual moves, and during scan."""
     frame_interval = 1.0 / CAM_FPS
     try:
         while True:
-            if scan_in_progress:
-                try:
-                    jpg_bytes = scan_frame_buffer.get_nowait()
-                    await websocket.send(jpg_bytes)
-                except queue.Empty:
-                    pass
-                await asyncio.sleep(frame_interval)
-                continue
-
             ok, frame = cam.read()
-            if not ok:
+            if not ok or frame is None:
                 await asyncio.sleep(frame_interval)
                 continue
 
@@ -318,7 +319,7 @@ def shutdown(*_):
     if ser and ser.is_open:
         ser.close()
         print("[SHUTDOWN] Serial closed")
-    if cam and cam.isOpened():
+    if cam:
         cam.release()
         print("[SHUTDOWN] Camera released")
     sys.exit(0)
