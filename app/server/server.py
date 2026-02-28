@@ -34,8 +34,8 @@ CAM_HEIGHT = 480
 JOG_STEP_MM = 50.0    # mm per manual direction press
 JPEG_QUALITY = 50      # 1-100, lower = smaller/faster, higher = sharper
 
-GANTRY_MAX_X_MM = 450.0  # travel limit on X axis
-GANTRY_MAX_Y_MM = 450.0  # travel limit on Y axis
+GANTRY_MAX_X_MM = 400.0  # travel limit on X axis
+GANTRY_MAX_Y_MM = 400.0  # travel limit on Y axis
 # ────────────────────────────────────────────────────────────
 
 # ──────────────── Scanning support (import cv_work) ─────────
