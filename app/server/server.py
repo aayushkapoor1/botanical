@@ -185,18 +185,33 @@ DIRECTION_MAP = {
 }
 
 
+pending_direction: str | None = None
+
+
 async def execute_move(direction: str) -> None:
-    """Run a single jog move in a thread. Skipped if one is already running."""
-    global move_in_progress
+    """Run jog moves in a thread, chaining consecutive moves while
+    the user keeps holding a direction button."""
+    global move_in_progress, pending_direction
     move_in_progress = True
-    x, y = DIRECTION_MAP[direction]
+    pending_direction = None
     loop = asyncio.get_running_loop()
+
     try:
-        await loop.run_in_executor(None, cmd_move_xy, ser, x, y)
+        while True:
+            x, y = DIRECTION_MAP[direction]
+            await loop.run_in_executor(None, cmd_move_xy, ser, x, y)
+
+            if pending_direction is not None:
+                direction = pending_direction
+                pending_direction = None
+                await asyncio.sleep(0.05)
+            else:
+                break
     except Exception as e:
         print(f"[MOVE] Error: {e}")
     finally:
         move_in_progress = False
+        pending_direction = None
 
 
 async def execute_home() -> None:
@@ -221,6 +236,8 @@ async def execute_home() -> None:
 
 async def process_command(cmd_raw: str) -> str:
     """Handle movement / calibration commands."""
+    global pending_direction
+
     if scan_in_progress:
         return "Scan in progress - controls locked"
 
@@ -233,6 +250,7 @@ async def process_command(cmd_raw: str) -> str:
         if _raw_cmd_move_xy is None:
             return "Movement not available (missing cv_work module)"
         if move_in_progress:
+            pending_direction = cmd
             return "Moving..."
         asyncio.create_task(execute_move(cmd))
         return f"Moving {cmd.lower()}..."
