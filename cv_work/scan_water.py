@@ -293,72 +293,118 @@ def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = Tru
 # MAIN SCANNING LOGIC (RASTER / SNAKE PATTERN)
 # ============================================================
 
-def main():
-    # --- Open serial to ESP ---
-    ser = open_serial()
+def run_scan(ser, cap, model, progress_callback=None, cancel_event=None):
+    """
+    Execute the full raster scan, detecting and watering plants.
 
-    # Print any startup lines (READY, etc.) if present
-    for ln in read_lines(ser):
-        print("[ESP]", ln)
+    Args:
+        ser: Open serial.Serial connection to ESP.
+        cap: Open cv2.VideoCapture.
+        model: Loaded YOLO model instance.
+        progress_callback: Optional callable(str) invoked with status messages.
+        cancel_event: Optional threading.Event; set it to abort the scan early.
 
-    # --- Load YOLO model ---
-    model = YOLO(MODEL_NAME)
+    Returns:
+        dict with keys 'cells_scanned', 'plants_found', 'cancelled', 'error'.
+    """
+    original_timeout = ser.timeout
+    ser.timeout = 0.1
 
-    # --- Open camera ---
-    # Common on Pi: 0 is default. If you use USB camera, it might be 0 or 1.
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        raise RuntimeError("Could not open camera (try VideoCapture(1) if needed)")
+    def report(msg):
+        print(msg)
+        if progress_callback:
+            progress_callback(msg)
 
-    print("[SCAN] Starting raster scan...")
-    print(f"[SCAN] Grid: {COLS}x{ROWS}, step=({STEP_X_MM}mm,{STEP_Y_MM}mm), dwell={DWELL_S}s, water={WATER_MS}ms")
+    def is_cancelled():
+        return cancel_event is not None and cancel_event.is_set()
+
+    plants_found = 0
+    cells_scanned = 0
+    total_cells = ROWS * COLS
+    cancelled = False
+
+    report(f"[SCAN] Starting raster scan: {COLS}x{ROWS} grid")
 
     try:
-        # Snake raster:
-        # row 0: left->right, row 1: right->left, row 2: left->right, ...
-        # This avoids wasting time returning to col 0 every row.
         for r in range(ROWS):
+            if is_cancelled():
+                cancelled = True
+                break
+
             if r % 2 == 0:
-                # even row: scan increasing columns
                 col_range = range(COLS)
                 x_step = +STEP_X_MM
             else:
-                # odd row: scan decreasing columns
                 col_range = range(COLS - 1, -1, -1)
                 x_step = -STEP_X_MM
 
             for ci, c in enumerate(col_range):
-                # Movement policy:
-                # - At very first cell (r=0, first col), we do not move.
-                # - Otherwise:
-                #    if continuing within same row: move in X
-                #    if starting a new row: move down in Y by STEP_Y_MM
+                if is_cancelled():
+                    cancelled = True
+                    break
+
                 if not (r == 0 and ci == 0):
                     if ci > 0:
-                        # Move to next column on same row
                         cmd_move_xy(ser, x_step, 0.0)
                     else:
-                        # Starting a new row: move "down" one row
                         cmd_move_xy(ser, 0.0, STEP_Y_MM)
 
-                print(f"[SCAN] At cell row={r}, col={c} (looking...)")
+                cells_scanned += 1
+                report(f"[SCAN] Checking cell ({r},{c}) [{cells_scanned}/{total_cells}]")
 
-                # Look for DWELL_S seconds at this cell
                 found = detect_plant_for_duration(cap, model, DWELL_S, show_ui=False)
 
-                # If a plant is found, water here
                 if found:
-                    print(f"[SCAN] Plant detected at row={r}, col={c} -> watering {WATER_MS}ms")
+                    plants_found += 1
+                    report(f"[SCAN] Plant found at ({r},{c}) - watering {WATER_MS}ms")
                     cmd_pump_on(ser, WATER_MS)
-
-                    # Optional small pause after watering
                     time.sleep(0.2)
 
-        print("[SCAN] Completed scan.")
+            if cancelled:
+                break
 
+        if cancelled:
+            report("[SCAN] Cancelled by user")
+        else:
+            report(f"[SCAN] Finished - watered {plants_found} out of {cells_scanned} cells")
+
+        return {
+            "cells_scanned": cells_scanned,
+            "plants_found": plants_found,
+            "cancelled": cancelled,
+            "error": None,
+        }
+
+    except (TimeoutError, RuntimeError) as e:
+        report(f"[SCAN] Error: {e}")
+        return {
+            "cells_scanned": cells_scanned,
+            "plants_found": plants_found,
+            "cancelled": False,
+            "error": str(e),
+        }
+
+    finally:
+        ser.timeout = original_timeout
+
+
+def main():
+    ser = open_serial()
+
+    for ln in read_lines(ser):
+        print("[ESP]", ln)
+
+    model = YOLO(MODEL_NAME)
+
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        raise RuntimeError("Could not open camera (try VideoCapture(1) if needed)")
+
+    try:
+        result = run_scan(ser, cap, model)
+        print(f"[SCAN] Result: {result}")
     except KeyboardInterrupt:
-        print("\n[SCAN] Stopped by user (ESC or CTRL+C).")
-
+        print("\n[SCAN] Stopped by user (CTRL+C).")
     finally:
         cap.release()
         cv2.destroyAllWindows()
