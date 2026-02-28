@@ -3,16 +3,21 @@
 Unified WebSocket server for:
  • bidirectional command channel  (text → server, text ← server)
  • unidirectional video stream   (binary JPEGs → client)
+ • scan-and-water routine        (triggered by WATER_ALL command)
 
 Dependencies:
-    pip install websockets opencv-python pyserial
+    pip install websockets opencv-python pyserial ultralytics
 """
 
 import asyncio
 import cv2
+import functools
+import os
+import queue
 import serial
 import signal
 import sys
+import threading
 import websockets
 from websockets.exceptions import ConnectionClosed
 
@@ -23,12 +28,42 @@ SERIAL_BAUDRATE = 115_200
 WEBSOCKET_HOST = "0.0.0.0"
 WEBSOCKET_PORT = 8000
 
-CAM_FPS = 20  # target FPS
+CAM_FPS = 20
 CAM_WIDTH = 640
 CAM_HEIGHT = 480
+
+JOG_STEP_MM = 20.0  # mm per manual direction press
 # ────────────────────────────────────────────────────────────
 
-# Serial setup ───────────────────────────────────────────────
+# ──────────────── Scanning support (import cv_work) ─────────
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, PROJECT_ROOT)
+
+SCAN_AVAILABLE = False
+model = None
+
+try:
+    from cv_work.scan_water import run_scan, cmd_move_xy
+    from ultralytics import YOLO
+
+    _model_path = os.path.join(PROJECT_ROOT, 'cv_work', 'yolov8n.pt')
+    model = YOLO(_model_path) if os.path.exists(_model_path) else YOLO("yolov8n.pt")
+    SCAN_AVAILABLE = True
+    print(f"[INIT] YOLO model loaded — scanning available")
+except ImportError as e:
+    print(f"[INIT] Scanning not available ({e}). Manual controls still work.")
+    cmd_move_xy = None
+
+# ────────────────── Shared state (global) ───────────────────
+scan_in_progress = False
+scan_cancel = threading.Event()
+move_in_progress = False
+
+# During scanning, the scan thread writes JPEG bytes here so the
+# video-stream task can keep sending frames to the frontend.
+scan_frame_buffer: queue.Queue[bytes] = queue.Queue(maxsize=2)
+
+# ─────────────────── Serial setup ───────────────────────────
 ser = None
 
 
@@ -36,13 +71,15 @@ def connect_serial() -> None:
     global ser
     try:
         ser = serial.Serial(SERIAL_PORT, SERIAL_BAUDRATE, timeout=1)
-        print(f"✅ Serial connected on {SERIAL_PORT}")
+        print(f"[INIT] Serial connected on {SERIAL_PORT}")
     except Exception as e:
-        print(f"❌ Serial connection failed: {e}")
+        print(f"[INIT] Serial connection failed: {e}")
         ser = None
 
 
 connect_serial()
+
+# ─────────────────── Camera setup ───────────────────────────
 
 
 def find_working_camera(max_index=10):
@@ -53,70 +90,157 @@ def find_working_camera(max_index=10):
             return i
     return None
 
+
 cam_index = find_working_camera()
 if cam_index is None:
-    print("❌ No working camera found")
+    print("[INIT] No working camera found")
     sys.exit(1)
 
 cam = cv2.VideoCapture(cam_index)
 cam.set(cv2.CAP_PROP_FRAME_WIDTH, CAM_WIDTH)
 cam.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
-print(f"📷 Using camera at index {cam_index}")
+print(f"[INIT] Using camera at index {cam_index}")
 
 
+# ────────────────────── Movement logic ──────────────────────
+DIRECTION_MAP = {
+    "UP":    (0.0, -JOG_STEP_MM),
+    "DOWN":  (0.0,  JOG_STEP_MM),
+    "LEFT":  (-JOG_STEP_MM, 0.0),
+    "RIGHT": ( JOG_STEP_MM, 0.0),
+}
 
-# ────────────────────── Command logic ───────────────────────
+
+async def execute_move(direction: str) -> None:
+    """Run a single jog move in a thread. Skipped if one is already running."""
+    global move_in_progress
+    move_in_progress = True
+    x, y = DIRECTION_MAP[direction]
+    loop = asyncio.get_running_loop()
+    try:
+        await loop.run_in_executor(None, cmd_move_xy, ser, x, y)
+    except Exception as e:
+        print(f"[MOVE] Error: {e}")
+    finally:
+        move_in_progress = False
+
+
 async def process_command(cmd_raw: str) -> str:
+    """Handle movement / calibration commands."""
+    if scan_in_progress:
+        return "Scan in progress - controls locked"
+
     if not (ser and ser.is_open):
         return "Serial not connected"
 
     cmd = cmd_raw.strip().upper()
-    if cmd == "UP":
-        try:
-            ser.write(b"UP\n")
-            return "Moved up"
-        except Exception as e:
-            return f"Serial error: {e}"
-    elif cmd == "DOWN":
-        try:
-            ser.write(b"DOWN\n")
-            return "Moved down"
-        except Exception as e:
-            return f"Serial error: {e}"
-    elif cmd == "LEFT":
-        try:
-            ser.write(b"LEFT\n")
-            return "Moved left"
-        except Exception as e:
-            return f"Serial error: {e}"
-    elif cmd == "RIGHT":
-        try:
-            ser.write(b"RIGHT\n")
-            return "Moved right"
-        except Exception as e:
-            return f"Serial error: {e}"
-    elif cmd == "CALIBRATE":
-        print("CALIBRATE")
-        # ESP32 connection not set up yet – placeholder
+
+    if cmd in DIRECTION_MAP:
+        if cmd_move_xy is None:
+            return "Movement not available (missing cv_work module)"
+        if move_in_progress:
+            return "Moving..."
+        asyncio.create_task(execute_move(cmd))
+        return f"Moving {cmd.lower()}..."
+
+    if cmd == "CALIBRATE":
+        ser.write(b"CALIBRATE\n")
         return "Calibrate received"
-    elif cmd == "WATER_ALL":
-        print("WATER_ALL (unimplemented)")
-        # Water-all routine not set up yet – placeholder
-        # When implemented, return "Water all complete" to update the calendar
-        return "Water all – unimplemented"
-    else:
-        return "Unknown command"
+
+    return "Unknown command"
 
 
-# ───────────────────── Video‑stream task ─────────────────────
+# ──────────────────── Scan execution ────────────────────────
+def _on_scan_frame(frame) -> None:
+    """Called from the scan thread with each camera frame (numpy array).
+    Encode to JPEG and drop into the buffer so send_video can forward it."""
+    ok, buf = cv2.imencode(".jpg", frame)
+    if not ok:
+        return
+    jpg_bytes = buf.tobytes()
+    try:
+        scan_frame_buffer.put_nowait(jpg_bytes)
+    except queue.Full:
+        try:
+            scan_frame_buffer.get_nowait()
+        except queue.Empty:
+            pass
+        scan_frame_buffer.put_nowait(jpg_bytes)
+
+
+async def execute_scan(websocket) -> None:
+    """Run the full scan-and-water routine in a background thread,
+    forwarding progress messages and video frames to the client."""
+    global scan_in_progress
+    scan_in_progress = True
+    scan_cancel.clear()
+
+    loop = asyncio.get_running_loop()
+    progress_queue: asyncio.Queue[str] = asyncio.Queue()
+
+    def on_progress(msg: str):
+        loop.call_soon_threadsafe(progress_queue.put_nowait, msg)
+
+    # Let the video loop notice the flag and stop touching the camera
+    await asyncio.sleep(0.2)
+
+    try:
+        scan_fn = functools.partial(
+            run_scan, ser, cam, model,
+            progress_callback=on_progress,
+            cancel_event=scan_cancel,
+            frame_callback=_on_scan_frame,
+        )
+        scan_future = loop.run_in_executor(None, scan_fn)
+
+        while not scan_future.done():
+            try:
+                msg = await asyncio.wait_for(progress_queue.get(), timeout=0.5)
+                await websocket.send(msg)
+            except asyncio.TimeoutError:
+                continue
+
+        while not progress_queue.empty():
+            msg = progress_queue.get_nowait()
+            await websocket.send(msg)
+
+        result = scan_future.result()
+
+        if result.get("error"):
+            await websocket.send(f"Scan error: {result['error']}")
+        elif result.get("cancelled"):
+            await websocket.send("Scan cancelled")
+        else:
+            await websocket.send("Water all complete")
+
+    except ConnectionClosed:
+        scan_cancel.set()
+    except Exception as e:
+        try:
+            await websocket.send(f"Scan error: {e}")
+        except ConnectionClosed:
+            pass
+    finally:
+        scan_in_progress = False
+
+
+# ───────────────────── Video-stream task ─────────────────────
 async def send_video(websocket) -> None:
-    """
-    Continuously capture frames and push them to the client as binary JPEGs.
-    Runs as a background task tied to a single WebSocket.
-    """
+    """Continuously push JPEG frames to the client.
+    During scanning, frames come from the scan thread's frame buffer
+    instead of reading the camera directly."""
     frame_interval = 1.0 / CAM_FPS
     try:
         while True:
+            if scan_in_progress:
+                try:
+                    jpg_bytes = scan_frame_buffer.get_nowait()
+                    await websocket.send(jpg_bytes)
+                except queue.Empty:
+                    pass
+                await asyncio.sleep(frame_interval)
+                continue
+
             ok, frame = cam.read()
             if not ok:
                 await asyncio.sleep(frame_interval)
@@ -127,30 +251,58 @@ async def send_video(websocket) -> None:
                 await asyncio.sleep(frame_interval)
                 continue
 
-            await websocket.send(buf.tobytes())  # binary frame
+            await websocket.send(buf.tobytes())
             await asyncio.sleep(frame_interval)
     except asyncio.CancelledError:
-        # Normal cancellation when the client disconnects
         pass
 
 
-# ───────────── Per‑connection combined handler ──────────────
+# ───────────── Per-connection combined handler ──────────────
 async def handle_connection(websocket) -> None:
     client = websocket.remote_address
-    print(f"🔌 Client connected from {client}")
+    print(f"[WS] Client connected from {client}")
 
     video_task = asyncio.create_task(send_video(websocket))
+    scan_task = None
 
     try:
-        async for message in websocket:  # text messages from client
-            print(f"📩 Received: {message}")
-            response = await process_command(message)
-            await websocket.send(response)  # send back text response
+        async for message in websocket:
+            cmd = message.strip().upper()
+            print(f"[WS] Received: {cmd}")
+
+            if cmd == "WATER_ALL":
+                if scan_in_progress:
+                    await websocket.send("Scan already in progress")
+                elif not SCAN_AVAILABLE:
+                    await websocket.send("Scanning not available (missing ultralytics)")
+                elif not (ser and ser.is_open):
+                    await websocket.send("Serial not connected")
+                else:
+                    scan_task = asyncio.create_task(execute_scan(websocket))
+                    await websocket.send("Starting scan...")
+
+            elif cmd == "CANCEL_SCAN":
+                if scan_in_progress:
+                    scan_cancel.set()
+                    await websocket.send("Cancelling scan...")
+                else:
+                    await websocket.send("No scan running")
+
+            else:
+                response = await process_command(message)
+                await websocket.send(response)
+
     except ConnectionClosed:
-        print(f"❌ Client disconnected: {client}")
+        print(f"[WS] Client disconnected: {client}")
     except Exception as e:
-        print(f"🔥 Unexpected error ({client}): {e}")
+        print(f"[WS] Unexpected error ({client}): {e}")
     finally:
+        if scan_task and not scan_task.done():
+            scan_cancel.set()
+            try:
+                await asyncio.wait_for(scan_task, timeout=10.0)
+            except (asyncio.TimeoutError, Exception):
+                scan_task.cancel()
         video_task.cancel()
         try:
             await video_task
@@ -160,13 +312,13 @@ async def handle_connection(websocket) -> None:
 
 # ───────────────────── Graceful shutdown ────────────────────
 def shutdown(*_):
-    print("🛑 Shutting down…")
+    print("[SHUTDOWN] Shutting down...")
     if ser and ser.is_open:
         ser.close()
-        print("🔌 Serial connection closed")
+        print("[SHUTDOWN] Serial closed")
     if cam and cam.isOpened():
         cam.release()
-        print("📷 Camera released")
+        print("[SHUTDOWN] Camera released")
     sys.exit(0)
 
 
@@ -177,8 +329,8 @@ signal.signal(signal.SIGTERM, shutdown)
 # ─────────────────────────── main ───────────────────────────
 async def main() -> None:
     async with websockets.serve(handle_connection, WEBSOCKET_HOST, WEBSOCKET_PORT):
-        print(f"🚀 WebSocket server running at ws://{WEBSOCKET_HOST}:{WEBSOCKET_PORT}")
-        await asyncio.Future()  # run forever
+        print(f"[INIT] WebSocket server running at ws://{WEBSOCKET_HOST}:{WEBSOCKET_PORT}")
+        await asyncio.Future()
 
 
 if __name__ == "__main__":

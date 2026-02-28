@@ -240,10 +240,12 @@ class PlantDebouncer:
         return False
 
 
-def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = True) -> bool:
+def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = True,
+                              frame_callback=None) -> bool:
     """
     Look at camera frames for duration_s seconds.
     Returns True if a debounced "new plant found" happens during that window.
+    If frame_callback is provided, each raw frame is passed to it for streaming.
     """
     deb = PlantDebouncer()
     t0 = time.time()
@@ -255,17 +257,15 @@ def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = Tru
 
         frame = digital_zoom(frame, ZOOM)
 
-        # Run YOLO detection for only the "potted plant" class.
-        # verbose=False reduces console spam.
+        if frame_callback:
+            frame_callback(frame)
+
         res = model.predict(frame, conf=CONF_THRES, classes=[POTTED_PLANT_CLASS], verbose=False)[0]
 
-        # "plant_present" means YOLO reported at least one bounding box
         plant_present = (res.boxes is not None) and (len(res.boxes) > 0)
 
-        # Update debouncer; "triggered" is True only once per stable detection
         triggered = deb.update(plant_present)
 
-        # Optional display for debugging in your demo
         if show_ui:
             status = "PLANT" if deb.state_on else "No plant"
             cv2.putText(
@@ -279,7 +279,6 @@ def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = Tru
             )
             cv2.imshow("Scan (debounced)", frame)
 
-            # ESC quits
             if cv2.waitKey(1) & 0xFF == 27:
                 raise KeyboardInterrupt
 
@@ -293,7 +292,8 @@ def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = Tru
 # MAIN SCANNING LOGIC (RASTER / SNAKE PATTERN)
 # ============================================================
 
-def run_scan(ser, cap, model, progress_callback=None, cancel_event=None):
+def run_scan(ser, cap, model, progress_callback=None, cancel_event=None,
+             frame_callback=None):
     """
     Execute the full raster scan, detecting and watering plants.
 
@@ -303,6 +303,8 @@ def run_scan(ser, cap, model, progress_callback=None, cancel_event=None):
         model: Loaded YOLO model instance.
         progress_callback: Optional callable(str) invoked with status messages.
         cancel_event: Optional threading.Event; set it to abort the scan early.
+        frame_callback: Optional callable(numpy.ndarray) called with each camera
+                        frame so the caller can stream video during the scan.
 
     Returns:
         dict with keys 'cells_scanned', 'plants_found', 'cancelled', 'error'.
@@ -352,7 +354,8 @@ def run_scan(ser, cap, model, progress_callback=None, cancel_event=None):
                 cells_scanned += 1
                 report(f"[SCAN] Checking cell ({r},{c}) [{cells_scanned}/{total_cells}]")
 
-                found = detect_plant_for_duration(cap, model, DWELL_S, show_ui=False)
+                found = detect_plant_for_duration(cap, model, DWELL_S, show_ui=False,
+                                                  frame_callback=frame_callback)
 
                 if found:
                     plants_found += 1
