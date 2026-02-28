@@ -158,6 +158,7 @@ function App() {
 
   /* --- hold-to-repeat helper -------------------------------------------- */
   const startSending = (cmd: string) => {
+    stopSending();
     const sock = socketRef.current;
     if (!sock || sock.readyState !== WebSocket.OPEN) return;
     sock.send(cmd);
