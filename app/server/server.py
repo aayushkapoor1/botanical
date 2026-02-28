@@ -31,8 +31,11 @@ CAM_FPS = 20
 CAM_WIDTH = 640
 CAM_HEIGHT = 480
 
-JOG_STEP_MM = 50.0   # mm per manual direction press
-JPEG_QUALITY = 50     # 1-100, lower = smaller/faster, higher = sharper
+JOG_STEP_MM = 50.0    # mm per manual direction press
+JPEG_QUALITY = 50      # 1-100, lower = smaller/faster, higher = sharper
+
+GANTRY_MAX_X_MM = 500.0  # travel limit on X axis
+GANTRY_MAX_Y_MM = 500.0  # travel limit on Y axis
 # ────────────────────────────────────────────────────────────
 
 # ──────────────── Scanning support (import cv_work) ─────────
@@ -43,7 +46,8 @@ SCAN_AVAILABLE = False
 model = None
 
 try:
-    from cv_work.scan_water import run_scan, cmd_move_xy
+    from cv_work.scan_water import run_scan, cmd_move_xy as _raw_cmd_move_xy
+    import cv_work.scan_water as _scan_module
     from ultralytics import YOLO
 
     _model_path = os.path.join(PROJECT_ROOT, 'cv_work', 'yolov8n.pt')
@@ -52,7 +56,44 @@ try:
     print(f"[INIT] YOLO model loaded — scanning available")
 except ImportError as e:
     print(f"[INIT] Scanning not available ({e}). Manual controls still work.")
-    cmd_move_xy = None
+    _raw_cmd_move_xy = None
+    _scan_module = None
+
+# ────────────────── Gantry position tracking ────────────────
+# Assumes (0,0) at startup / after calibration.
+# All moves are clamped so position stays within [0, MAX].
+gantry_pos = [0.0, 0.0]  # [x_mm, y_mm]
+gantry_lock = threading.Lock()
+
+
+def cmd_move_xy(ser, dx_mm, dy_mm):
+    """Boundary-enforced wrapper around the raw MOVE XY command.
+    Clamps the requested delta so the gantry stays within
+    [0, GANTRY_MAX_X_MM] x [0, GANTRY_MAX_Y_MM]."""
+    with gantry_lock:
+        new_x = max(0.0, min(GANTRY_MAX_X_MM, gantry_pos[0] + dx_mm))
+        new_y = max(0.0, min(GANTRY_MAX_Y_MM, gantry_pos[1] + dy_mm))
+        actual_dx = new_x - gantry_pos[0]
+        actual_dy = new_y - gantry_pos[1]
+        gantry_pos[0] = new_x
+        gantry_pos[1] = new_y
+
+    if abs(actual_dx) < 0.01 and abs(actual_dy) < 0.01:
+        print(f"[SAFETY] Move blocked — at boundary "
+              f"(pos: {gantry_pos[0]:.0f}, {gantry_pos[1]:.0f})mm")
+        return
+
+    if abs(actual_dx - dx_mm) > 0.01 or abs(actual_dy - dy_mm) > 0.01:
+        print(f"[SAFETY] Move clamped: requested ({dx_mm:.0f},{dy_mm:.0f}) "
+              f"→ actual ({actual_dx:.0f},{actual_dy:.0f})mm")
+
+    _raw_cmd_move_xy(ser, actual_dx, actual_dy)
+
+
+# Patch the scan_water module so run_scan's internal calls
+# to cmd_move_xy also go through boundary enforcement.
+if _scan_module is not None:
+    _scan_module.cmd_move_xy = cmd_move_xy
 
 # ────────────────── Shared state (global) ───────────────────
 scan_in_progress = False
@@ -158,6 +199,26 @@ async def execute_move(direction: str) -> None:
         move_in_progress = False
 
 
+async def execute_home() -> None:
+    """Move the gantry back to (0,0) using tracked position."""
+    global move_in_progress
+    move_in_progress = True
+    with gantry_lock:
+        dx = -gantry_pos[0]
+        dy = -gantry_pos[1]
+    loop = asyncio.get_running_loop()
+    try:
+        if abs(dx) > 0.01 or abs(dy) > 0.01:
+            await loop.run_in_executor(None, cmd_move_xy, ser, dx, dy)
+            print(f"[HOME] Homed to (0,0)")
+        else:
+            print(f"[HOME] Already at (0,0)")
+    except Exception as e:
+        print(f"[HOME] Error: {e}")
+    finally:
+        move_in_progress = False
+
+
 async def process_command(cmd_raw: str) -> str:
     """Handle movement / calibration commands."""
     if scan_in_progress:
@@ -169,7 +230,7 @@ async def process_command(cmd_raw: str) -> str:
     cmd = cmd_raw.strip().upper()
 
     if cmd in DIRECTION_MAP:
-        if cmd_move_xy is None:
+        if _raw_cmd_move_xy is None:
             return "Movement not available (missing cv_work module)"
         if move_in_progress:
             return "Moving..."
@@ -177,8 +238,16 @@ async def process_command(cmd_raw: str) -> str:
         return f"Moving {cmd.lower()}..."
 
     if cmd == "CALIBRATE":
-        ser.write(b"CALIBRATE\n")
-        return "Calibrate received"
+        if _raw_cmd_move_xy is None:
+            return "Movement not available (missing cv_work module)"
+        if move_in_progress:
+            return "Busy - try again"
+        with gantry_lock:
+            dist = abs(gantry_pos[0]) + abs(gantry_pos[1])
+        if dist < 0.01:
+            return "Already at home (0,0)"
+        asyncio.create_task(execute_home())
+        return f"Homing to (0,0)..."
 
     return "Unknown command"
 
