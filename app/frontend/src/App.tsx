@@ -111,7 +111,10 @@ function App() {
     const socket = new WebSocket("ws://10.40.227.209:8000");
     socket.binaryType = "arraybuffer";
 
-    socket.onopen = () => setStatus("Connected");
+    socket.onopen = () => {
+      setStatus("Connected");
+      socket.send("GET_SCHEDULES");
+    };
     socket.onerror = () => setStatus("Error – see console");
     socket.onclose = () => setStatus("Disconnected");
 
@@ -120,15 +123,23 @@ function App() {
         const msg = event.data;
         const msgLower = msg.toLowerCase();
 
+        if (msg.startsWith("SCHEDULES ")) {
+          try {
+            const data = JSON.parse(msg.slice("SCHEDULES ".length));
+            if (data.weekly) setSchedules(data.weekly);
+            if (data.date_specific) setDateEvents(data.date_specific);
+            if (data.watered_log) setWateredDates(data.watered_log);
+          } catch (e) {
+            console.error("Failed to parse schedules:", e);
+          }
+          return;
+        }
+
         if (msg.startsWith("[SCAN]")) {
           setScanStatus(msg.replace(/^\[SCAN]\s*/, ""));
         }
 
         if (msgLower === "water all complete") {
-          const dateKey = todayKeyRef.current;
-          const now = new Date();
-          const timeStr = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
-          setWateredDates((prev) => ({ ...prev, [dateKey]: timeStr }));
           setWaterAllState("complete");
           setScanStatus("");
           setTimeout(() => setWaterAllState("idle"), 2000);
@@ -169,6 +180,19 @@ function App() {
     if (sendTimerRef.current !== null) {
       clearInterval(sendTimerRef.current);
       sendTimerRef.current = null;
+    }
+  };
+
+  const pushSchedules = (
+    weekly: Record<DayKey, string[]>,
+    dateSpecific: Record<string, string[]>
+  ) => {
+    const sock = socketRef.current;
+    if (sock && sock.readyState === WebSocket.OPEN) {
+      sock.send("SET_SCHEDULES " + JSON.stringify({
+        weekly,
+        date_specific: dateSpecific,
+      }));
     }
   };
 
@@ -471,6 +495,7 @@ function App() {
                                   return rest;
                                 });
                               }
+                              pushSchedules(next, dateEvents);
                               return next;
                             });
                           }}
@@ -487,10 +512,14 @@ function App() {
                         onChange={(e) => {
                           const v = e.target.value;
                           if (v) {
-                            setSchedules((prev) => ({
-                              ...prev,
-                              [key]: [...(prev[key].includes(v) ? prev[key] : [...prev[key], v])].sort(),
-                            }));
+                            setSchedules((prev) => {
+                              const next = {
+                                ...prev,
+                                [key]: [...(prev[key].includes(v) ? prev[key] : [...prev[key], v])].sort(),
+                              };
+                              pushSchedules(next, dateEvents);
+                              return next;
+                            });
                             setScheduleStartDates((prev) => (prev[key] ? prev : { ...prev, [key]: todayKey }));
                             e.target.value = "";
                           }
@@ -654,6 +683,7 @@ function App() {
                                       const next = { ...prev };
                                       if (list.length === 0) delete next[selectedDate];
                                       else next[selectedDate] = list;
+                                      pushSchedules(schedules, next);
                                       return next;
                                     });
                                   }}
@@ -673,7 +703,9 @@ function App() {
                                     setDateEvents((prev) => {
                                       const list = prev[selectedDate] ?? [];
                                       if (list.includes(v)) return prev;
-                                      return { ...prev, [selectedDate]: [...list, v].sort() };
+                                      const next = { ...prev, [selectedDate]: [...list, v].sort() };
+                                      pushSchedules(schedules, next);
+                                      return next;
                                     });
                                     e.target.value = "";
                                   }

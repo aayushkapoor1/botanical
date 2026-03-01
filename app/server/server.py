@@ -12,11 +12,14 @@ Dependencies:
 import asyncio
 import cv2
 import functools
+import json
 import os
 import serial
 import signal
 import sys
+import tempfile
 import threading
+from datetime import datetime
 import websockets
 from websockets.exceptions import ConnectionClosed
 
@@ -99,6 +102,63 @@ if _scan_module is not None:
 scan_in_progress = False
 scan_cancel = threading.Event()
 move_in_progress = False
+connected_clients: set = set()
+
+# ────────────────── Schedule persistence ────────────────────
+SCHEDULE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schedules.json")
+PYTHON_WEEKDAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+DEFAULT_SCHEDULE = {
+    "weekly": {d: [] for d in PYTHON_WEEKDAY_KEYS},
+    "date_specific": {},
+    "watered_log": {},
+}
+
+
+def load_schedules() -> dict:
+    try:
+        with open(SCHEDULE_FILE, "r") as f:
+            data = json.load(f)
+        for key in DEFAULT_SCHEDULE:
+            data.setdefault(key, DEFAULT_SCHEDULE[key])
+        for d in PYTHON_WEEKDAY_KEYS:
+            data["weekly"].setdefault(d, [])
+        return data
+    except (FileNotFoundError, json.JSONDecodeError):
+        return json.loads(json.dumps(DEFAULT_SCHEDULE))
+
+
+def save_schedules(data: dict) -> None:
+    tmp_fd, tmp_path = tempfile.mkstemp(
+        dir=os.path.dirname(SCHEDULE_FILE), suffix=".tmp"
+    )
+    try:
+        with os.fdopen(tmp_fd, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp_path, SCHEDULE_FILE)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+schedule_data = load_schedules()
+print(f"[INIT] Schedules loaded from {SCHEDULE_FILE}")
+
+
+def schedule_json() -> str:
+    return json.dumps(schedule_data)
+
+
+async def broadcast_schedules() -> None:
+    msg = f"SCHEDULES {schedule_json()}"
+    for ws in list(connected_clients):
+        try:
+            await ws.send(msg)
+        except ConnectionClosed:
+            connected_clients.discard(ws)
 
 # ─────────────────── Serial setup ───────────────────────────
 ser = None
@@ -315,7 +375,13 @@ async def execute_scan(websocket) -> None:
         elif result.get("cancelled"):
             await websocket.send("Scan cancelled")
         else:
+            now = datetime.now()
+            date_key = now.strftime("%Y-%m-%d")
+            time_str = now.strftime("%I:%M %p").lstrip("0")
+            schedule_data["watered_log"][date_key] = time_str
+            save_schedules(schedule_data)
             await websocket.send("Water all complete")
+            await broadcast_schedules()
 
     except ConnectionClosed:
         scan_cancel.set()
@@ -326,6 +392,72 @@ async def execute_scan(websocket) -> None:
             pass
     finally:
         scan_in_progress = False
+
+
+# ──────────────── Scheduled / headless scan ──────────────────
+async def execute_scheduled_scan() -> None:
+    """Run a scan triggered by the scheduler (no websocket for progress).
+    Logs progress to console and updates watered_log on completion."""
+    global scan_in_progress
+    scan_in_progress = True
+    scan_cancel.clear()
+
+    loop = asyncio.get_running_loop()
+
+    def on_progress(msg: str):
+        print(msg)
+
+    print("[SCHEDULER] Starting scheduled scan...")
+
+    try:
+        scan_fn = functools.partial(
+            run_scan, ser, cam, model,
+            progress_callback=on_progress,
+            cancel_event=scan_cancel,
+        )
+        result = await loop.run_in_executor(None, scan_fn)
+
+        if result.get("error"):
+            print(f"[SCHEDULER] Scan error: {result['error']}")
+        elif result.get("cancelled"):
+            print("[SCHEDULER] Scan cancelled")
+        else:
+            now = datetime.now()
+            date_key = now.strftime("%Y-%m-%d")
+            time_str = now.strftime("%I:%M %p").lstrip("0")
+            schedule_data["watered_log"][date_key] = time_str
+            save_schedules(schedule_data)
+            print(f"[SCHEDULER] Scan complete — logged at {time_str}")
+            await broadcast_schedules()
+    except Exception as e:
+        print(f"[SCHEDULER] Error: {e}")
+    finally:
+        scan_in_progress = False
+
+
+async def scheduler_loop() -> None:
+    """Background loop that checks schedules every 30s and triggers scans."""
+    while True:
+        await asyncio.sleep(30)
+
+        if scan_in_progress or not SCAN_AVAILABLE or not (ser and ser.is_open):
+            continue
+
+        now = datetime.now()
+        today_key = now.strftime("%Y-%m-%d")
+        current_hhmm = now.strftime("%H:%M")
+        day_key = PYTHON_WEEKDAY_KEYS[now.weekday()]
+
+        if today_key in schedule_data.get("watered_log", {}):
+            continue
+
+        weekly_times = schedule_data.get("weekly", {}).get(day_key, [])
+        date_times = schedule_data.get("date_specific", {}).get(today_key, [])
+        all_times = set(weekly_times + date_times)
+
+        if current_hhmm in all_times:
+            print(f"[SCHEDULER] Matched schedule: {current_hhmm} on {day_key} ({today_key})")
+            await execute_scheduled_scan()
 
 
 # ───────────────────── Video-stream task ─────────────────────
@@ -356,16 +488,33 @@ async def send_video(websocket) -> None:
 async def handle_connection(websocket) -> None:
     client = websocket.remote_address
     print(f"[WS] Client connected from {client}")
+    connected_clients.add(websocket)
 
     video_task = asyncio.create_task(send_video(websocket))
     scan_task = None
 
     try:
         async for message in websocket:
-            cmd = message.strip().upper()
-            print(f"[WS] Received: {cmd}")
+            raw = message.strip()
+            prefix = raw.split(" ", 1)[0].upper()
+            print(f"[WS] Received: {prefix}")
 
-            if cmd == "WATER_ALL":
+            if prefix == "GET_SCHEDULES":
+                await websocket.send(f"SCHEDULES {schedule_json()}")
+
+            elif prefix == "SET_SCHEDULES":
+                try:
+                    payload = json.loads(raw[len("SET_SCHEDULES "):])
+                    if "weekly" in payload:
+                        schedule_data["weekly"] = payload["weekly"]
+                    if "date_specific" in payload:
+                        schedule_data["date_specific"] = payload["date_specific"]
+                    save_schedules(schedule_data)
+                    await broadcast_schedules()
+                except (json.JSONDecodeError, KeyError) as e:
+                    await websocket.send(f"Schedule error: {e}")
+
+            elif prefix == "WATER_ALL":
                 if scan_in_progress:
                     await websocket.send("Scan already in progress")
                 elif not SCAN_AVAILABLE:
@@ -376,7 +525,7 @@ async def handle_connection(websocket) -> None:
                     scan_task = asyncio.create_task(execute_scan(websocket))
                     await websocket.send("Starting scan...")
 
-            elif cmd == "CANCEL_SCAN":
+            elif prefix == "CANCEL_SCAN":
                 if scan_in_progress:
                     scan_cancel.set()
                     await websocket.send("Cancelling scan...")
@@ -384,7 +533,7 @@ async def handle_connection(websocket) -> None:
                     await websocket.send("No scan running")
 
             else:
-                response = await process_command(message)
+                response = await process_command(raw)
                 await websocket.send(response)
 
     except ConnectionClosed:
@@ -392,6 +541,7 @@ async def handle_connection(websocket) -> None:
     except Exception as e:
         print(f"[WS] Unexpected error ({client}): {e}")
     finally:
+        connected_clients.discard(websocket)
         if scan_task and not scan_task.done():
             scan_cancel.set()
             try:
@@ -423,6 +573,8 @@ signal.signal(signal.SIGTERM, shutdown)
 
 # ─────────────────────────── main ───────────────────────────
 async def main() -> None:
+    asyncio.create_task(scheduler_loop())
+    print("[INIT] Scheduler started")
     async with websockets.serve(handle_connection, WEBSOCKET_HOST, WEBSOCKET_PORT):
         print(f"[INIT] WebSocket server running at ws://{WEBSOCKET_HOST}:{WEBSOCKET_PORT}")
         await asyncio.Future()
