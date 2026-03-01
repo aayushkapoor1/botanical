@@ -136,7 +136,9 @@ def save_schedules(data: dict) -> None:
         with os.fdopen(tmp_fd, "w") as f:
             json.dump(data, f, indent=2)
         os.replace(tmp_path, SCHEDULE_FILE)
-    except Exception:
+        print(f"[SCHEDULE] Saved to {SCHEDULE_FILE}")
+    except Exception as e:
+        print(f"[SCHEDULE] Failed to save: {e}")
         try:
             os.unlink(tmp_path)
         except OSError:
@@ -145,7 +147,11 @@ def save_schedules(data: dict) -> None:
 
 
 schedule_data = load_schedules()
-print(f"[INIT] Schedules loaded from {SCHEDULE_FILE}")
+if not os.path.exists(SCHEDULE_FILE):
+    save_schedules(schedule_data)
+    print(f"[INIT] Created default {SCHEDULE_FILE}")
+else:
+    print(f"[INIT] Schedules loaded from {SCHEDULE_FILE}")
 
 
 def schedule_json() -> str:
@@ -440,23 +446,33 @@ async def scheduler_loop() -> None:
     while True:
         await asyncio.sleep(30)
 
-        if scan_in_progress or not SCAN_AVAILABLE or not (ser and ser.is_open):
-            continue
-
         now = datetime.now()
         today_key = now.strftime("%Y-%m-%d")
         current_hhmm = now.strftime("%H:%M")
         day_key = PYTHON_WEEKDAY_KEYS[now.weekday()]
 
-        if today_key in schedule_data.get("watered_log", {}):
+        if scan_in_progress:
+            print(f"[SCHEDULER] {current_hhmm} — skipping (scan already in progress)")
+            continue
+        if not SCAN_AVAILABLE:
+            print(f"[SCHEDULER] {current_hhmm} — skipping (YOLO model not loaded)")
+            continue
+        if not (ser and ser.is_open):
+            print(f"[SCHEDULER] {current_hhmm} — skipping (serial not connected)")
             continue
 
         weekly_times = schedule_data.get("weekly", {}).get(day_key, [])
         date_times = schedule_data.get("date_specific", {}).get(today_key, [])
         all_times = set(weekly_times + date_times)
 
+        print(f"[SCHEDULER] {current_hhmm} {day_key} — checking {len(all_times)} scheduled time(s): {sorted(all_times) if all_times else 'none'}")
+
         if current_hhmm in all_times:
-            print(f"[SCHEDULER] Matched schedule: {current_hhmm} on {day_key} ({today_key})")
+            already_ran = today_key in schedule_data.get("watered_log", {})
+            if already_ran:
+                print(f"[SCHEDULER] Matched {current_hhmm} but already ran today — skipping")
+                continue
+            print(f"[SCHEDULER] Matched schedule: {current_hhmm} on {day_key} ({today_key}) — starting scan")
             await execute_scheduled_scan()
 
 
@@ -511,7 +527,8 @@ async def handle_connection(websocket) -> None:
                         schedule_data["date_specific"] = payload["date_specific"]
                     save_schedules(schedule_data)
                     await broadcast_schedules()
-                except (json.JSONDecodeError, KeyError) as e:
+                except Exception as e:
+                    print(f"[SCHEDULE] SET_SCHEDULES error: {e}")
                     await websocket.send(f"Schedule error: {e}")
 
             elif prefix == "WATER_ALL":
