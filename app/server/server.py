@@ -468,10 +468,6 @@ async def scheduler_loop() -> None:
         print(f"[SCHEDULER] {current_hhmm} {day_key} — checking {len(all_times)} scheduled time(s): {sorted(all_times) if all_times else 'none'}")
 
         if current_hhmm in all_times:
-            already_ran = today_key in schedule_data.get("watered_log", {})
-            if already_ran:
-                print(f"[SCHEDULER] Matched {current_hhmm} but already ran today — skipping")
-                continue
             print(f"[SCHEDULER] Matched schedule: {current_hhmm} on {day_key} ({today_key}) — starting scan")
             await execute_scheduled_scan()
 
