@@ -49,10 +49,10 @@ WATER_MS = 5000
 # --- YOLO model settings ---
 MODEL_NAME = "yolov8n.pt"
 POTTED_PLANT_CLASS = 58
-CONF_THRES = 0.35
+CONF_THRES = 0.30
 
 # --- Digital zoom (1.0 = no zoom, 2.0 = 2x center crop, etc.) ---
-ZOOM = 1.5
+ZOOM = 1.0
 
 # --- Vision debouncing ---
 # Consecutive frames with a centered detection before triggering.
