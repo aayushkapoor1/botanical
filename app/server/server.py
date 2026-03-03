@@ -309,23 +309,13 @@ async def execute_home() -> None:
         move_in_progress = False
 
 
-async def execute_pump_on() -> None:
-    """Start the pump with a safety-capped duration. Call PUMP OFF to stop early."""
-    global pump_in_progress
-    pump_in_progress = True
-    loop = asyncio.get_running_loop()
+def pump_on_sync() -> None:
+    """Send PUMP ON with a safety-capped duration. PUMP OFF stops it early."""
     try:
-        def _pump():
-            if _raw_cmd_pump_on is not None:
-                _raw_cmd_pump_on(ser, PUMP_HOLD_MS)
-            else:
-                ser.write(f"PUMP ON {PUMP_HOLD_MS}\n".encode("utf-8"))
-        await loop.run_in_executor(None, _pump)
-        print("[PUMP] Pump cycle finished")
+        ser.write(f"PUMP ON {PUMP_HOLD_MS}\n".encode("utf-8"))
+        print(f"[PUMP] Pump started ({PUMP_HOLD_MS}ms cap)")
     except Exception as e:
-        print(f"[PUMP] Error: {e}")
-    finally:
-        pump_in_progress = False
+        print(f"[PUMP] Error starting pump: {e}")
 
 
 def pump_off_sync() -> None:
@@ -373,13 +363,13 @@ async def process_command(cmd_raw: str) -> str:
     if cmd == "PUMP_ON":
         if pump_in_progress:
             return "Pump already running"
-        asyncio.create_task(execute_pump_on())
+        pump_in_progress = True
+        pump_on_sync()
         return "Pump on"
 
     if cmd == "PUMP_OFF":
         if pump_in_progress:
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, pump_off_sync)
+            pump_off_sync()
             pump_in_progress = False
         return "Pump off"
 
