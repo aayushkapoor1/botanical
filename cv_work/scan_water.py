@@ -38,10 +38,10 @@ ROWS = 7
 
 # Step size between cells in mm (the ESP converts mm to steps)
 STEP_X_MM = 50.0
-STEP_Y_MM = 50.0
+STEP_Y_MM = 75.0
 
 # --- How long we sit and look at each cell ---
-DWELL_S = 0.5
+DWELL_S = 0.3
 
 # --- Watering duration ---
 WATER_MS = 5000
