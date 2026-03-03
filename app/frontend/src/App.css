@@ -251,6 +251,7 @@ button.status-badge {
 
 .canvas-wrapper {
   display: inline-block;
+  position: relative;
   border-radius: var(--radius-md);
   overflow: hidden;
   background: #111;
@@ -968,6 +969,107 @@ button.status-badge {
   font-size: 0.9rem;
   font-weight: 500;
   color: var(--color-text);
+}
+
+/* ─── Live view layout ─────────────────────────────── */
+
+.live-view-row {
+  display: flex;
+  gap: 1.25rem;
+  align-items: flex-start;
+}
+
+.plant-found-overlay {
+  position: absolute;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.5rem 1.25rem;
+  background: rgba(34, 165, 90, 0.92);
+  color: white;
+  font-size: 1rem;
+  font-weight: 600;
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgba(34, 165, 90, 0.4);
+  animation: plant-flash 2s ease-out forwards;
+  pointer-events: none;
+  z-index: 10;
+}
+
+@keyframes plant-flash {
+  0% { opacity: 0; transform: translateX(-50%) scale(0.95); }
+  10% { opacity: 1; transform: translateX(-50%) scale(1); }
+  70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* ─── Scan side panel ─────────────────────────────── */
+
+.scan-side-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 160px;
+  padding: 1rem;
+  background: var(--color-primary-muted);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+}
+
+.scan-side-status {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.scan-side-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  animation: scan-pulse 1.5s ease-in-out infinite;
+}
+
+.scan-side-detail {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--color-text);
+  line-height: 1.3;
+}
+
+.scan-side-counter {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.75rem;
+  background: var(--color-bg-elevated);
+  border-radius: var(--radius-sm);
+  transition: background var(--transition);
+}
+
+.scan-side-counter--found {
+  background: #dcfce7;
+}
+
+.scan-side-count {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: var(--color-text);
+  line-height: 1;
+}
+
+.scan-side-counter--found .scan-side-count {
+  color: var(--color-primary);
+}
+
+.scan-side-count-label {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-top: 0.2rem;
 }
 
 /* ─── Scan progress ───────────────────────────────── */

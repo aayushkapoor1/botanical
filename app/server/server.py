@@ -38,8 +38,8 @@ CAM_HEIGHT = 480
 JOG_STEP_MM = 100.0    # mm per manual direction press
 JPEG_QUALITY = 50      # 1-100, lower = smaller/faster, higher = sharper
 
-GANTRY_MAX_X_MM = 400.0  # travel limit on X axis
-GANTRY_MAX_Y_MM = 400.0  # travel limit on Y axis
+GANTRY_MAX_X_MM = 450.0  # travel limit on X axis
+GANTRY_MAX_Y_MM = 450.0  # travel limit on Y axis
 # ────────────────────────────────────────────────────────────
 
 # ──────────────── Scanning support (import cv_work) ─────────
@@ -439,11 +439,17 @@ async def execute_scan(websocket) -> None:
     def on_progress(msg: str):
         loop.call_soon_threadsafe(progress_queue.put_nowait, msg)
 
+    def on_boxes(boxes):
+        with _boxes_lock:
+            _latest_boxes.clear()
+            _latest_boxes.extend(boxes)
+
     try:
         scan_fn = functools.partial(
             run_scan, ser, cam, model,
             progress_callback=on_progress,
             cancel_event=scan_cancel,
+            box_callback=on_boxes,
         )
         scan_future = loop.run_in_executor(None, scan_fn)
 
@@ -507,11 +513,17 @@ async def execute_scheduled_scan() -> None:
 
     print("[SCHEDULER] Starting scheduled scan...")
 
+    def on_boxes(boxes):
+        with _boxes_lock:
+            _latest_boxes.clear()
+            _latest_boxes.extend(boxes)
+
     try:
         scan_fn = functools.partial(
             run_scan, ser, cam, model,
             progress_callback=on_progress,
             cancel_event=scan_cancel,
+            box_callback=on_boxes,
         )
         result = await loop.run_in_executor(None, scan_fn)
 

@@ -33,23 +33,27 @@ SERIAL_PORT = None
 
 # --- Scan grid ---
 # The raster scan will visit ROWS x COLS "cells".
-COLS = 5
-ROWS = 5
+COLS = 7
+ROWS = 7
 
 # Step size between cells in mm (the ESP converts mm to steps)
-STEP_X_MM = 75.0
-STEP_Y_MM = 75.0
+STEP_X_MM = 50.0
+STEP_Y_MM = 50.0
 
 # --- How long we sit and look at each cell ---
-DWELL_S = 0.5
+DWELL_S = 0.2
 
 # --- Watering duration ---
 WATER_MS = 5000
 
+# --- Post-water skip ---
+# After watering a plant, skip this many cells forward to avoid rescanning it.
+SKIP_CELLS_AFTER_WATER = 2
+
 # --- YOLO model settings ---
 MODEL_NAME = "yolov8n.pt"
 POTTED_PLANT_CLASS = 58
-CONF_THRES = 0.30
+CONF_THRES = 0.275
 
 # --- Digital zoom (1.0 = no zoom, 2.0 = 2x center crop, etc.) ---
 ZOOM = 1.0
@@ -70,7 +74,7 @@ COOLDOWN_S = 1.5
 # Fraction of frame dimensions defining the central crosshair box.
 # A bbox only counts if its center falls inside this region.
 # 0.25 = center 25% of width and height.
-CROSSHAIR_RATIO = 0.25
+CROSSHAIR_RATIO = 0.35
 
 
 # ============================================================
@@ -266,11 +270,12 @@ class PlantDebouncer:
 
 
 def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = True,
-                              frame_callback=None) -> bool:
+                              frame_callback=None, box_callback=None) -> bool:
     """
     Look at camera frames for duration_s seconds.
     Returns True if a debounced "new plant found" happens during that window.
     If frame_callback is provided, each raw frame is passed to it for streaming.
+    If box_callback is provided, it receives a list of (xyxy, conf) tuples each frame.
     """
     deb = PlantDebouncer()
     t0 = time.time()
@@ -286,6 +291,15 @@ def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = Tru
             frame_callback(frame)
 
         res = model.predict(frame, conf=CONF_THRES, classes=[POTTED_PLANT_CLASS], verbose=False)[0]
+
+        if box_callback:
+            boxes_out = []
+            if res.boxes is not None and len(res.boxes) > 0:
+                for box in res.boxes:
+                    xyxy = box.xyxy[0].tolist()
+                    conf = float(box.conf[0])
+                    boxes_out.append((xyxy, conf))
+            box_callback(boxes_out)
 
         h, w = frame.shape[:2]
         plant_present = (
@@ -323,7 +337,7 @@ def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = Tru
 # ============================================================
 
 def run_scan(ser, cap, model, progress_callback=None, cancel_event=None,
-             frame_callback=None):
+             frame_callback=None, box_callback=None):
     """
     Execute the full raster scan, detecting and watering plants.
 
@@ -335,6 +349,8 @@ def run_scan(ser, cap, model, progress_callback=None, cancel_event=None,
         cancel_event: Optional threading.Event; set it to abort the scan early.
         frame_callback: Optional callable(numpy.ndarray) called with each camera
                         frame so the caller can stream video during the scan.
+        box_callback: Optional callable(list) receiving [(xyxy, conf), ...] each
+                      inference frame so the caller can overlay bounding boxes.
 
     Returns:
         dict with keys 'cells_scanned', 'plants_found', 'cancelled', 'error'.
@@ -370,7 +386,10 @@ def run_scan(ser, cap, model, progress_callback=None, cancel_event=None,
                 col_range = range(COLS - 1, -1, -1)
                 x_step = -STEP_X_MM
 
-            for ci, c in enumerate(col_range):
+            cols = list(col_range)
+            ci = 0
+            while ci < len(cols):
+                c = cols[ci]
                 if is_cancelled():
                     cancelled = True
                     break
@@ -385,13 +404,22 @@ def run_scan(ser, cap, model, progress_callback=None, cancel_event=None,
                 report(f"[SCAN] Checking cell ({r},{c}) [{cells_scanned}/{total_cells}]")
 
                 found = detect_plant_for_duration(cap, model, DWELL_S, show_ui=False,
-                                                  frame_callback=frame_callback)
+                                                  frame_callback=frame_callback,
+                                                  box_callback=box_callback)
 
                 if found:
                     plants_found += 1
                     report(f"[SCAN] Plant found at ({r},{c}) - watering {WATER_MS}ms")
                     cmd_pump_on(ser, WATER_MS)
                     time.sleep(0.2)
+
+                    skip = min(SKIP_CELLS_AFTER_WATER, len(cols) - ci - 1)
+                    if skip > 0:
+                        report(f"[SCAN] Skipping {skip} cell(s) to clear plant")
+                        cmd_move_xy(ser, x_step * skip, 0.0)
+                        ci += skip
+
+                ci += 1
 
             if cancelled:
                 break

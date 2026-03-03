@@ -69,6 +69,8 @@ function App() {
   const [wateredDates, setWateredDates] = useState<Record<string, string>>({});
   const [waterAllState, setWaterAllState] = useState<"idle" | "watering" | "complete">("idle");
   const [scanStatus, setScanStatus] = useState("");
+  const [plantsFoundCount, setPlantsFoundCount] = useState(0);
+  const [plantFoundFlash, setPlantFoundFlash] = useState(false);
   const [debugMode, setDebugMode] = useState(false);
   const [mockCurrentDate, setMockCurrentDate] = useState<string | null>(null);
   const statusClickCountRef = useRef(0);
@@ -137,16 +139,27 @@ function App() {
         }
 
         if (msg.startsWith("[SCAN]")) {
-          setScanStatus(msg.replace(/^\[SCAN]\s*/, ""));
+          const scanMsg = msg.replace(/^\[SCAN]\s*/, "");
+          setScanStatus(scanMsg);
+
+          if (scanMsg.toLowerCase().includes("plant found")) {
+            setPlantsFoundCount((c) => c + 1);
+            setPlantFoundFlash(true);
+            setTimeout(() => setPlantFoundFlash(false), 2000);
+          }
         }
 
         if (msgLower === "water all complete") {
           setWaterAllState("complete");
           setScanStatus("");
-          setTimeout(() => setWaterAllState("idle"), 2000);
+          setTimeout(() => {
+            setWaterAllState("idle");
+            setPlantsFoundCount(0);
+          }, 2000);
         } else if (msgLower.includes("scan cancelled") || msgLower.includes("scan error")) {
           setWaterAllState("idle");
           setScanStatus("");
+          setPlantsFoundCount(0);
         }
 
         setStatus(msg);
@@ -304,8 +317,27 @@ function App() {
         {/* Live view card */}
         <section className="card card--live-view">
           <h2 className="card-title">Live View</h2>
-          <div className="canvas-wrapper">
-            <canvas ref={canvasRef} width={640} height={480} />
+          <div className="live-view-row">
+            <div className="canvas-wrapper">
+              <canvas ref={canvasRef} width={640} height={480} />
+              {plantFoundFlash && (
+                <div className="plant-found-overlay">Plant Found!</div>
+              )}
+            </div>
+            {waterAllState === "watering" && (
+              <div className="scan-side-panel">
+                <div className="scan-side-status">
+                  <span className="scan-side-label">Scanning</span>
+                  {scanStatus && <span className="scan-side-detail">{scanStatus}</span>}
+                </div>
+                <div className={`scan-side-counter ${plantsFoundCount > 0 ? "scan-side-counter--found" : ""}`}>
+                  <span className="scan-side-count">{plantsFoundCount}</span>
+                  <span className="scan-side-count-label">
+                    {plantsFoundCount === 1 ? "plant found" : "plants found"}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
         </section>
 
@@ -380,6 +412,7 @@ function App() {
                   if (waterAllState !== "idle") return;
                   setWaterAllState("watering");
                   setScanStatus("");
+                  setPlantsFoundCount(0);
                   const sock = socketRef.current;
                   if (sock && sock.readyState === WebSocket.OPEN) sock.send("WATER_ALL");
                 }}
