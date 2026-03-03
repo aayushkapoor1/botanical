@@ -18,7 +18,7 @@
 #define Y_LIMIT_PIN 2
 
 // Pump control output pin
-#define PUMP_PIN 18
+#define PUMP_PIN 16
 
 const unsigned long DEBOUNCE_MS = 20; // homing switch stability window
 
@@ -119,8 +119,17 @@ bool updateAxisHomingState(bool homed, bool rawPressed, unsigned long& pressedSi
   return (nowMs - pressedSinceMs) >= DEBOUNCE_MS;
 }
 
-void runStartupHoming() {
+bool runHoming() {
   Serial.println("START HOMING");
+
+  stepperX.stop();
+  stepperY.stop();
+  moveInProgress = false;
+  moveStopRequested = false;
+
+  stepperX.setSpeed(-HOMING_SPEED_STEPS_PER_SEC);
+  stepperY.setSpeed(-HOMING_SPEED_STEPS_PER_SEC);
+
   bool xHomed = false;
   bool yHomed = false;
   unsigned long xPressedSinceMs = 0;
@@ -162,7 +171,9 @@ void runStartupHoming() {
     posY_steps = 0;
   }
 
-  if (xHomed && yHomed) Serial.println("HOME DONE");
+  bool success = xHomed && yHomed;
+  if (success) Serial.println("HOME DONE");
+  return success;
 }
 
 // True when BOTH steppers have no remaining distance to go
@@ -209,6 +220,7 @@ void sendStatus() {
 //   MOVE Y <mm>            e.g. MOVE Y -50
 //   MOVE XY <x_mm> <y_mm>  e.g. MOVE XY 50 0
 //   STOP
+//   HOME                   re-run limit-switch homing
 //   PUMP ON <ms>           e.g. PUMP ON 1500
 //   PUMP OFF
 //   STATUS
@@ -228,6 +240,20 @@ void handleCommand(String line) {
     stepperY.stop();
     if (!motorsIdle()) moveStopRequested = true;
     respondOK(motorsIdle() ? "IDLE" : "STOPPING");
+    return;
+  }
+
+  if (line == "HOME") {
+    if (!motorsIdle()) {
+      respondERR("BUSY");
+      return;
+    }
+    bool ok = runHoming();
+    if (ok) {
+      respondOK("HOME");
+    } else {
+      respondERR("HOME TIMEOUT");
+    }
     return;
   }
 
@@ -358,10 +384,7 @@ void setup() {
   stepperY.setMaxSpeed(motorMaxSpeed);
   stepperY.setAcceleration(motorAcceleration);
 
-  // Home toward negative X/Y at low constant speed before accepting commands.
-  stepperX.setSpeed(-HOMING_SPEED_STEPS_PER_SEC);
-  stepperY.setSpeed(-HOMING_SPEED_STEPS_PER_SEC);
-  runStartupHoming();
+  runHoming();
 
   // Print startup lines (Python can read these but doesn’t require it)
   Serial.println("READY");

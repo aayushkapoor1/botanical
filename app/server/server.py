@@ -289,20 +289,29 @@ async def execute_move(direction: str) -> None:
         pending_direction = None
 
 
+def _serial_home(ser_port) -> None:
+    """Send HOME to the ESP and block until it completes homing via limit switches."""
+    from cv_work.scan_water import send_line, wait_for
+    send_line(ser_port, "HOME")
+    wait_for(ser_port, lambda ln: ln.startswith("OK HOME"), 50.0, "OK HOME")
+
+
+async def _home_and_reset(loop) -> None:
+    """Run limit-switch homing in a thread and reset the tracked position."""
+    await loop.run_in_executor(None, _serial_home, ser)
+    with gantry_lock:
+        gantry_pos[0] = 0.0
+        gantry_pos[1] = 0.0
+    print("[HOME] Homing complete — position reset to (0,0)")
+
+
 async def execute_home() -> None:
-    """Move the gantry back to (0,0) using tracked position."""
+    """Trigger the firmware's limit-switch homing routine, then reset tracked position."""
     global move_in_progress
     move_in_progress = True
-    with gantry_lock:
-        dx = -gantry_pos[0]
-        dy = -gantry_pos[1]
     loop = asyncio.get_running_loop()
     try:
-        if abs(dx) > 0.01 or abs(dy) > 0.01:
-            await loop.run_in_executor(None, cmd_move_xy, ser, dx, dy)
-            print(f"[HOME] Homed to (0,0)")
-        else:
-            print(f"[HOME] Already at (0,0)")
+        await _home_and_reset(loop)
     except Exception as e:
         print(f"[HOME] Error: {e}")
     finally:
@@ -349,16 +358,10 @@ async def process_command(cmd_raw: str) -> str:
         return f"Moving {cmd.lower()}..."
 
     if cmd == "CALIBRATE":
-        if _raw_cmd_move_xy is None:
-            return "Movement not available (missing cv_work module)"
         if move_in_progress:
             return "Busy - try again"
-        with gantry_lock:
-            dist = abs(gantry_pos[0]) + abs(gantry_pos[1])
-        if dist < 0.01:
-            return "Already at home (0,0)"
         asyncio.create_task(execute_home())
-        return f"Homing to (0,0)..."
+        return "Homing to (0,0) via limit switches..."
 
     if cmd == "PUMP_ON":
         if pump_in_progress:
@@ -433,6 +436,14 @@ async def execute_scan(websocket) -> None:
             pass
     finally:
         scan_in_progress = False
+        try:
+            await _home_and_reset(loop)
+            try:
+                await websocket.send("Homing complete")
+            except ConnectionClosed:
+                pass
+        except Exception as e:
+            print(f"[SCAN] Post-scan homing failed: {e}")
 
 
 # ──────────────── Scheduled / headless scan ──────────────────
@@ -474,6 +485,10 @@ async def execute_scheduled_scan() -> None:
         print(f"[SCHEDULER] Error: {e}")
     finally:
         scan_in_progress = False
+        try:
+            await _home_and_reset(loop)
+        except Exception as e:
+            print(f"[SCHEDULER] Post-scan homing failed: {e}")
 
 
 async def scheduler_loop() -> None:
