@@ -61,7 +61,7 @@ ZOOM = 1.0
 # --- Vision debouncing ---
 # Consecutive frames with a centered detection before triggering.
 # Kept low because the crosshair check already filters spatially.
-ON_HITS = 2
+ON_HITS = 1
 
 # After a plant is detected, we require OFF_MISSES frames without detection
 # before considering it "gone" again. This prevents flicker.
