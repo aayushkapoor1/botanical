@@ -332,10 +332,33 @@ function App() {
               >
                 Calibrate
               </button>
-              <button className="action-btn action-btn--water" disabled>
+              <button
+                className="action-btn action-btn--water"
+                onMouseDown={() => {
+                  const sock = socketRef.current;
+                  if (sock && sock.readyState === WebSocket.OPEN) sock.send("PUMP_ON");
+                }}
+                onMouseUp={() => {
+                  const sock = socketRef.current;
+                  if (sock && sock.readyState === WebSocket.OPEN) sock.send("PUMP_OFF");
+                }}
+                onMouseLeave={() => {
+                  const sock = socketRef.current;
+                  if (sock && sock.readyState === WebSocket.OPEN) sock.send("PUMP_OFF");
+                }}
+                onTouchStart={(e) => {
+                  e.preventDefault();
+                  const sock = socketRef.current;
+                  if (sock && sock.readyState === WebSocket.OPEN) sock.send("PUMP_ON");
+                }}
+                onTouchEnd={() => {
+                  const sock = socketRef.current;
+                  if (sock && sock.readyState === WebSocket.OPEN) sock.send("PUMP_OFF");
+                }}
+              >
                 Water
               </button>
-              <span className="action-hint">Water (manual control, unimplemented)</span>
+              <span className="action-hint">Hold to water</span>
               <button
                 className={`action-btn action-btn--water-all ${waterAllState !== "idle" ? "action-btn--water-all-active" : ""}`}
                 title={waterAllState === "watering" ? "Cancel scan" : "Starts the scan-and-water routine"}

@@ -49,7 +49,7 @@ SCAN_AVAILABLE = False
 model = None
 
 try:
-    from cv_work.scan_water import run_scan, cmd_move_xy as _raw_cmd_move_xy
+    from cv_work.scan_water import run_scan, cmd_move_xy as _raw_cmd_move_xy, cmd_pump_on as _raw_cmd_pump_on
     import cv_work.scan_water as _scan_module
     from ultralytics import YOLO
 
@@ -60,6 +60,7 @@ try:
 except ImportError as e:
     print(f"[INIT] Scanning not available ({e}). Manual controls still work.")
     _raw_cmd_move_xy = None
+    _raw_cmd_pump_on = None
     _scan_module = None
 
 # ────────────────── Gantry position tracking ────────────────
@@ -102,7 +103,10 @@ if _scan_module is not None:
 scan_in_progress = False
 scan_cancel = threading.Event()
 move_in_progress = False
+pump_in_progress = False
 connected_clients: set = set()
+
+PUMP_HOLD_MS = 30000  # max pump duration when holding button (safety cap)
 
 # ────────────────── Schedule persistence ────────────────────
 SCHEDULE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schedules.json")
@@ -305,9 +309,37 @@ async def execute_home() -> None:
         move_in_progress = False
 
 
+async def execute_pump_on() -> None:
+    """Start the pump with a safety-capped duration. Call PUMP OFF to stop early."""
+    global pump_in_progress
+    pump_in_progress = True
+    loop = asyncio.get_running_loop()
+    try:
+        def _pump():
+            if _raw_cmd_pump_on is not None:
+                _raw_cmd_pump_on(ser, PUMP_HOLD_MS)
+            else:
+                ser.write(f"PUMP ON {PUMP_HOLD_MS}\n".encode("utf-8"))
+        await loop.run_in_executor(None, _pump)
+        print("[PUMP] Pump cycle finished")
+    except Exception as e:
+        print(f"[PUMP] Error: {e}")
+    finally:
+        pump_in_progress = False
+
+
+def pump_off_sync() -> None:
+    """Immediately send PUMP OFF to the ESP."""
+    try:
+        ser.write(b"PUMP OFF\n")
+        print("[PUMP] Pump stopped")
+    except Exception as e:
+        print(f"[PUMP] Error stopping pump: {e}")
+
+
 async def process_command(cmd_raw: str) -> str:
-    """Handle movement / calibration commands."""
-    global pending_direction
+    """Handle movement / calibration / pump commands."""
+    global pending_direction, pump_in_progress
 
     if scan_in_progress:
         return "Scan in progress - controls locked"
@@ -337,6 +369,19 @@ async def process_command(cmd_raw: str) -> str:
             return "Already at home (0,0)"
         asyncio.create_task(execute_home())
         return f"Homing to (0,0)..."
+
+    if cmd == "PUMP_ON":
+        if pump_in_progress:
+            return "Pump already running"
+        asyncio.create_task(execute_pump_on())
+        return "Pump on"
+
+    if cmd == "PUMP_OFF":
+        if pump_in_progress:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, pump_off_sync)
+            pump_in_progress = False
+        return "Pump off"
 
     return "Unknown command"
 
