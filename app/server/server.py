@@ -636,6 +636,14 @@ signal.signal(signal.SIGTERM, shutdown)
 
 # ─────────────────────────── main ───────────────────────────
 async def main() -> None:
+    if ser and ser.is_open:
+        print("[INIT] Homing gantry on startup...")
+        try:
+            loop = asyncio.get_running_loop()
+            await _home_and_reset(loop)
+        except Exception as e:
+            print(f"[INIT] Startup homing failed: {e}")
+
     asyncio.create_task(scheduler_loop())
     print("[INIT] Scheduler started")
     async with websockets.serve(handle_connection, WEBSOCKET_HOST, WEBSOCKET_PORT):
