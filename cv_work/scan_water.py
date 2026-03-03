@@ -41,7 +41,7 @@ STEP_X_MM = 50.0
 STEP_Y_MM = 50.0
 
 # --- How long we sit and look at each cell ---
-DWELL_S = 0.2
+DWELL_S = 0.5
 
 # --- Watering duration ---
 WATER_MS = 5000
