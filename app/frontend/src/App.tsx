@@ -55,6 +55,7 @@ function App() {
   const socketRef = useRef<WebSocket | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const sendTimerRef = useRef<number | null>(null);
+  const pumpHeldRef = useRef(false);
   const [status, setStatus] = useState("Connecting…");
   const [activeTab, setActiveTab] = useState<"dashboard" | "calendar">("dashboard");
   const [schedules, setSchedules] = useState<Record<DayKey, string[]>>(() =>
@@ -67,6 +68,7 @@ function App() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [wateredDates, setWateredDates] = useState<Record<string, string>>({});
   const [waterAllState, setWaterAllState] = useState<"idle" | "watering" | "complete">("idle");
+  const [scanStatus, setScanStatus] = useState("");
   const [debugMode, setDebugMode] = useState(false);
   const [mockCurrentDate, setMockCurrentDate] = useState<string | null>(null);
   const statusClickCountRef = useRef(0);
@@ -103,39 +105,51 @@ function App() {
     }
   };
 
-  /* --- Water-all mock: 10s completion ------------------------------------ */
-  useEffect(() => {
-    if (waterAllState !== "watering") return;
-    const timeout = window.setTimeout(() => {
-      const dateKey = todayKeyRef.current;
-      const now = new Date();
-      const timeStr = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
-      setWateredDates((prev) => ({ ...prev, [dateKey]: timeStr }));
-      setWaterAllState("complete");
-      setTimeout(() => setWaterAllState("idle"), 1500);
-    }, 10000);
-    return () => clearTimeout(timeout);
-  }, [waterAllState]);
+  /* waterAllState transitions are now driven by WebSocket messages from the server */
 
   /* --- WebSocket setup --------------------------------------------------- */
   useEffect(() => {
-    const socket = new WebSocket("ws://raspberrypi.local:8000");
+    const socket = new WebSocket("ws://10.40.227.209:8000");
     socket.binaryType = "arraybuffer";
 
-    socket.onopen = () => setStatus("Connected");
+    socket.onopen = () => {
+      setStatus("Connected");
+      socket.send("GET_SCHEDULES");
+    };
     socket.onerror = () => setStatus("Error – see console");
     socket.onclose = () => setStatus("Disconnected");
 
     socket.onmessage = async (event) => {
       if (typeof event.data === "string") {
-        setStatus(event.data);
-        const msg = event.data.toLowerCase();
-        if (msg.includes("complete") && !msg.includes("unimplemented")) {
-          const dateKey = todayKeyRef.current;
-          const now = new Date();
-          const timeStr = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
-          setWateredDates((prev) => ({ ...prev, [dateKey]: timeStr }));
+        const msg = event.data;
+        const msgLower = msg.toLowerCase();
+
+        if (msg.startsWith("SCHEDULES ")) {
+          try {
+            const data = JSON.parse(msg.slice("SCHEDULES ".length));
+            if (data.weekly) setSchedules(data.weekly);
+            if (data.date_specific) setDateEvents(data.date_specific);
+            if (data.watered_log) setWateredDates(data.watered_log);
+          } catch (e) {
+            console.error("Failed to parse schedules:", e);
+          }
+          return;
         }
+
+        if (msg.startsWith("[SCAN]")) {
+          setScanStatus(msg.replace(/^\[SCAN]\s*/, ""));
+        }
+
+        if (msgLower === "water all complete") {
+          setWaterAllState("complete");
+          setScanStatus("");
+          setTimeout(() => setWaterAllState("idle"), 2000);
+        } else if (msgLower.includes("scan cancelled") || msgLower.includes("scan error")) {
+          setWaterAllState("idle");
+          setScanStatus("");
+        }
+
+        setStatus(msg);
         return;
       }
       try {
@@ -156,6 +170,7 @@ function App() {
 
   /* --- hold-to-repeat helper -------------------------------------------- */
   const startSending = (cmd: string) => {
+    stopSending();
     const sock = socketRef.current;
     if (!sock || sock.readyState !== WebSocket.OPEN) return;
     sock.send(cmd);
@@ -166,6 +181,19 @@ function App() {
     if (sendTimerRef.current !== null) {
       clearInterval(sendTimerRef.current);
       sendTimerRef.current = null;
+    }
+  };
+
+  const pushSchedules = (
+    weekly: Record<DayKey, string[]>,
+    dateSpecific: Record<string, string[]>
+  ) => {
+    const sock = socketRef.current;
+    if (sock && sock.readyState === WebSocket.OPEN) {
+      sock.send("SET_SCHEDULES " + JSON.stringify({
+        weekly,
+        date_specific: dateSpecific,
+      }));
     }
   };
 
@@ -305,29 +333,64 @@ function App() {
               >
                 Calibrate
               </button>
-              <button className="action-btn action-btn--water" disabled>
+              <button
+                className="action-btn action-btn--water"
+                onMouseDown={() => {
+                  pumpHeldRef.current = true;
+                  const sock = socketRef.current;
+                  if (sock && sock.readyState === WebSocket.OPEN) sock.send("PUMP_ON");
+                }}
+                onMouseUp={() => {
+                  if (!pumpHeldRef.current) return;
+                  pumpHeldRef.current = false;
+                  const sock = socketRef.current;
+                  if (sock && sock.readyState === WebSocket.OPEN) sock.send("PUMP_OFF");
+                }}
+                onMouseLeave={() => {
+                  if (!pumpHeldRef.current) return;
+                  pumpHeldRef.current = false;
+                  const sock = socketRef.current;
+                  if (sock && sock.readyState === WebSocket.OPEN) sock.send("PUMP_OFF");
+                }}
+                onTouchStart={(e) => {
+                  e.preventDefault();
+                  pumpHeldRef.current = true;
+                  const sock = socketRef.current;
+                  if (sock && sock.readyState === WebSocket.OPEN) sock.send("PUMP_ON");
+                }}
+                onTouchEnd={() => {
+                  if (!pumpHeldRef.current) return;
+                  pumpHeldRef.current = false;
+                  const sock = socketRef.current;
+                  if (sock && sock.readyState === WebSocket.OPEN) sock.send("PUMP_OFF");
+                }}
+              >
                 Water
               </button>
-              <span className="action-hint">Water (manual control, unimplemented)</span>
+              <span className="action-hint">Hold to water</span>
               <button
                 className={`action-btn action-btn--water-all ${waterAllState !== "idle" ? "action-btn--water-all-active" : ""}`}
-                title={waterAllState === "watering" ? "Cancel watering" : "Starts the water-all-plants routine"}
+                title={waterAllState === "watering" ? "Cancel scan" : "Starts the scan-and-water routine"}
                 onClick={() => {
                   if (waterAllState === "watering") {
-                    setWaterAllState("idle");
+                    const sock = socketRef.current;
+                    if (sock && sock.readyState === WebSocket.OPEN) sock.send("CANCEL_SCAN");
                     return;
                   }
                   if (waterAllState !== "idle") return;
                   setWaterAllState("watering");
+                  setScanStatus("");
                   const sock = socketRef.current;
                   if (sock && sock.readyState === WebSocket.OPEN) sock.send("WATER_ALL");
                 }}
               >
                 {waterAllState === "idle" && "Water all plants"}
-                {waterAllState === "watering" && "Click to cancel"}
+                {waterAllState === "watering" && "Cancel scan"}
                 {waterAllState === "complete" && "Done!"}
               </button>
-              <span className="action-hint action-hint--unimplemented">Unimplemented</span>
+              {waterAllState === "watering" && scanStatus && (
+                <span className="scan-progress">{scanStatus}</span>
+              )}
             </div>
           </div>
         </section>
@@ -464,6 +527,7 @@ function App() {
                                   return rest;
                                 });
                               }
+                              pushSchedules(next, dateEvents);
                               return next;
                             });
                           }}
@@ -480,10 +544,14 @@ function App() {
                         onChange={(e) => {
                           const v = e.target.value;
                           if (v) {
-                            setSchedules((prev) => ({
-                              ...prev,
-                              [key]: [...(prev[key].includes(v) ? prev[key] : [...prev[key], v])].sort(),
-                            }));
+                            setSchedules((prev) => {
+                              const next = {
+                                ...prev,
+                                [key]: [...(prev[key].includes(v) ? prev[key] : [...prev[key], v])].sort(),
+                              };
+                              pushSchedules(next, dateEvents);
+                              return next;
+                            });
                             setScheduleStartDates((prev) => (prev[key] ? prev : { ...prev, [key]: todayKey }));
                             e.target.value = "";
                           }
@@ -647,6 +715,7 @@ function App() {
                                       const next = { ...prev };
                                       if (list.length === 0) delete next[selectedDate];
                                       else next[selectedDate] = list;
+                                      pushSchedules(schedules, next);
                                       return next;
                                     });
                                   }}
@@ -666,7 +735,9 @@ function App() {
                                     setDateEvents((prev) => {
                                       const list = prev[selectedDate] ?? [];
                                       if (list.includes(v)) return prev;
-                                      return { ...prev, [selectedDate]: [...list, v].sort() };
+                                      const next = { ...prev, [selectedDate]: [...list, v].sort() };
+                                      pushSchedules(schedules, next);
+                                      return next;
                                     });
                                     e.target.value = "";
                                   }
