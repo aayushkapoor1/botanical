@@ -55,6 +55,7 @@ function App() {
   const socketRef = useRef<WebSocket | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const sendTimerRef = useRef<number | null>(null);
+  const pumpHeldRef = useRef(false);
   const [status, setStatus] = useState("Connecting…");
   const [activeTab, setActiveTab] = useState<"dashboard" | "calendar">("dashboard");
   const [schedules, setSchedules] = useState<Record<DayKey, string[]>>(() =>
@@ -335,23 +336,31 @@ function App() {
               <button
                 className="action-btn action-btn--water"
                 onMouseDown={() => {
+                  pumpHeldRef.current = true;
                   const sock = socketRef.current;
                   if (sock && sock.readyState === WebSocket.OPEN) sock.send("PUMP_ON");
                 }}
                 onMouseUp={() => {
+                  if (!pumpHeldRef.current) return;
+                  pumpHeldRef.current = false;
                   const sock = socketRef.current;
                   if (sock && sock.readyState === WebSocket.OPEN) sock.send("PUMP_OFF");
                 }}
                 onMouseLeave={() => {
+                  if (!pumpHeldRef.current) return;
+                  pumpHeldRef.current = false;
                   const sock = socketRef.current;
                   if (sock && sock.readyState === WebSocket.OPEN) sock.send("PUMP_OFF");
                 }}
                 onTouchStart={(e) => {
                   e.preventDefault();
+                  pumpHeldRef.current = true;
                   const sock = socketRef.current;
                   if (sock && sock.readyState === WebSocket.OPEN) sock.send("PUMP_ON");
                 }}
                 onTouchEnd={() => {
+                  if (!pumpHeldRef.current) return;
+                  pumpHeldRef.current = false;
                   const sock = socketRef.current;
                   if (sock && sock.readyState === WebSocket.OPEN) sock.send("PUMP_OFF");
                 }}
