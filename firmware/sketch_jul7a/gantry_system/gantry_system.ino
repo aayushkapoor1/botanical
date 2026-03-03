@@ -10,12 +10,12 @@
 #define DIR1_PIN  22
 
 // Stepper driver pins for Motor 2, Y axis
-#define STEP2_PIN 4
-#define DIR2_PIN  15
+#define STEP2_PIN 19
+#define DIR2_PIN  18
 
 // Axis limit switch pins (INPUT_PULLUP, pressed = HIGH)
-#define X_LIMIT_PIN 19
-#define Y_LIMIT_PIN 21
+#define X_LIMIT_PIN 15
+#define Y_LIMIT_PIN 2
 
 // Pump control output pin
 #define PUMP_PIN 18
