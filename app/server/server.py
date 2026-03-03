@@ -19,6 +19,7 @@ import signal
 import sys
 import tempfile
 import threading
+import time
 from datetime import datetime
 import websockets
 from websockets.exceptions import ConnectionClosed
@@ -244,6 +245,51 @@ _raw_cam.set(cv2.CAP_PROP_FRAME_WIDTH, CAM_WIDTH)
 _raw_cam.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
 cam = ThreadedCamera(_raw_cam)
 print(f"[INIT] Using camera at index {cam_index}")
+
+
+# ────────────── Live detection overlay ──────────────────────
+_latest_boxes: list = []
+_boxes_lock = threading.Lock()
+
+
+def _overlay_inference_loop():
+    """Background thread: continuously runs YOLO on the latest camera frame
+    and caches bounding boxes so the video stream can draw them."""
+    while True:
+        if model is None or scan_in_progress:
+            time.sleep(0.5)
+            with _boxes_lock:
+                _latest_boxes.clear()
+            continue
+
+        ok, frame = cam.read()
+        if not ok or frame is None:
+            time.sleep(0.05)
+            continue
+
+        frame = _scan_module.digital_zoom(frame, _scan_module.ZOOM)
+        res = model.predict(
+            frame,
+            conf=_scan_module.CONF_THRES,
+            classes=[_scan_module.POTTED_PLANT_CLASS],
+            verbose=False,
+        )[0]
+
+        boxes = []
+        if res.boxes is not None and len(res.boxes) > 0:
+            for box in res.boxes:
+                xyxy = box.xyxy[0].tolist()
+                conf = float(box.conf[0])
+                boxes.append((xyxy, conf))
+
+        with _boxes_lock:
+            _latest_boxes.clear()
+            _latest_boxes.extend(boxes)
+
+
+if SCAN_AVAILABLE:
+    threading.Thread(target=_overlay_inference_loop, daemon=True).start()
+    print("[INIT] Detection overlay thread started")
 
 
 # ────────────────────── Movement logic ──────────────────────
@@ -525,7 +571,7 @@ async def scheduler_loop() -> None:
 # ───────────────────── Video-stream task ─────────────────────
 async def send_video(websocket) -> None:
     """Continuously grab the latest frame and push it to the client.
-    Works at all times — normal operation, manual moves, and during scan."""
+    Draws the crosshair region and YOLO bounding boxes when available."""
     frame_interval = 1.0 / CAM_FPS
     try:
         while True:
@@ -533,6 +579,34 @@ async def send_video(websocket) -> None:
             if not ok or frame is None:
                 await asyncio.sleep(frame_interval)
                 continue
+
+            if SCAN_AVAILABLE:
+                frame = _scan_module.digital_zoom(frame, _scan_module.ZOOM)
+                h, w = frame.shape[:2]
+                cx, cy = w // 2, h // 2
+                half_w = int(w * _scan_module.CROSSHAIR_RATIO / 2)
+                half_h = int(h * _scan_module.CROSSHAIR_RATIO / 2)
+
+                cv2.rectangle(
+                    frame,
+                    (cx - half_w, cy - half_h),
+                    (cx + half_w, cy + half_h),
+                    (0, 255, 0), 2,
+                )
+
+                with _boxes_lock:
+                    boxes_snapshot = list(_latest_boxes)
+
+                for xyxy, conf in boxes_snapshot:
+                    x1, y1, x2, y2 = [int(v) for v in xyxy]
+                    box_cx = (x1 + x2) // 2
+                    box_cy = (y1 + y2) // 2
+                    in_crosshair = (abs(box_cx - cx) <= half_w
+                                    and abs(box_cy - cy) <= half_h)
+                    color = (0, 255, 0) if in_crosshair else (0, 0, 255)
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                    cv2.putText(frame, f"{conf:.0%}", (x1, y1 - 8),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
             ok, buf = cv2.imencode(".jpg", frame,
                                     [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])

@@ -41,7 +41,7 @@ STEP_X_MM = 75.0
 STEP_Y_MM = 75.0
 
 # --- How long we sit and look at each cell ---
-DWELL_S = 1.0
+DWELL_S = 0.5
 
 # --- Watering duration ---
 WATER_MS = 5000
@@ -55,9 +55,9 @@ CONF_THRES = 0.35
 ZOOM = 1.5
 
 # --- Vision debouncing ---
-# We require ON_HITS consecutive frames where a plant is detected
-# before we trigger "NEW PLANT FOUND".
-ON_HITS = 3
+# Consecutive frames with a centered detection before triggering.
+# Kept low because the crosshair check already filters spatially.
+ON_HITS = 2
 
 # After a plant is detected, we require OFF_MISSES frames without detection
 # before considering it "gone" again. This prevents flicker.
@@ -65,6 +65,12 @@ OFF_MISSES = 6
 
 # After we trigger once, we wait COOLDOWN_S seconds before allowing another trigger.
 COOLDOWN_S = 1.5
+
+# --- Crosshair region ---
+# Fraction of frame dimensions defining the central crosshair box.
+# A bbox only counts if its center falls inside this region.
+# 0.25 = center 25% of width and height.
+CROSSHAIR_RATIO = 0.25
 
 
 # ============================================================
@@ -199,6 +205,25 @@ def cmd_clear_fault(ser: serial.Serial):
 
 
 # ============================================================
+# CROSSHAIR (centre-point) CHECK
+# ============================================================
+
+def _box_centered(boxes, frame_w, frame_h):
+    """Return True if any bounding box's center falls inside the crosshair region."""
+    half_w = frame_w * CROSSHAIR_RATIO / 2
+    half_h = frame_h * CROSSHAIR_RATIO / 2
+    fcx, fcy = frame_w / 2, frame_h / 2
+
+    for box in boxes.xyxy:
+        x1, y1, x2, y2 = box[:4]
+        box_cx = (x1 + x2) / 2
+        box_cy = (y1 + y2) / 2
+        if abs(box_cx - fcx) <= half_w and abs(box_cy - fcy) <= half_h:
+            return True
+    return False
+
+
+# ============================================================
 # VISION DEBOUNCING
 # ============================================================
 
@@ -262,7 +287,12 @@ def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = Tru
 
         res = model.predict(frame, conf=CONF_THRES, classes=[POTTED_PLANT_CLASS], verbose=False)[0]
 
-        plant_present = (res.boxes is not None) and (len(res.boxes) > 0)
+        h, w = frame.shape[:2]
+        plant_present = (
+            res.boxes is not None
+            and len(res.boxes) > 0
+            and _box_centered(res.boxes, w, h)
+        )
 
         triggered = deb.update(plant_present)
 
