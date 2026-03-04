@@ -59,7 +59,7 @@ DETECTION_MODE = "hsv"
 # --- HSV green detection settings ---
 HSV_GREEN_LO = (30, 40, 40)   # lower bound (H, S, V)
 HSV_GREEN_HI = (90, 255, 255) # upper bound
-GREEN_AREA_THRESH = 0.80       # fraction of crosshair region that must be green
+GREEN_AREA_THRESH = 0.60       # fraction of crosshair region that must be green
 
 # --- YOLO model settings ---
 MODEL_NAME = "yolov8n.pt"
@@ -85,7 +85,7 @@ COOLDOWN_S = 1.5
 # Fraction of frame dimensions defining the central crosshair box.
 # A bbox only counts if its center falls inside this region.
 # 0.25 = center 25% of width and height.
-CROSSHAIR_RATIO = 0.30
+CROSSHAIR_RATIO = 0.27
 
 # Vertical offset for the crosshair center, as a fraction of frame height.
 # Positive = shift down. Adjust if the hose nozzle isn't aligned with frame center.
