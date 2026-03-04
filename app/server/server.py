@@ -26,6 +26,8 @@ from http import HTTPStatus
 from pathlib import Path
 import websockets
 from websockets.exceptions import ConnectionClosed
+from websockets.datastructures import Headers as WSHeaders
+from websockets.http11 import Response as WSResponse
 
 # ────────────────────────── Config ──────────────────────────
 SERIAL_PORT = "/dev/ttyUSB0"
@@ -729,14 +731,16 @@ signal.signal(signal.SIGTERM, shutdown)
 MIME_OVERRIDES = {".js": "application/javascript", ".css": "text/css", ".html": "text/html"}
 
 
-async def process_request(path, request_headers):
+async def process_request(connection, request):
     """Serve static frontend files for regular HTTP requests.
     WebSocket upgrade requests pass through to the WS handler."""
-    if "Upgrade" in request_headers:
+    if request.headers.get("Upgrade"):
         return None
 
+    path = request.path
+
     if not FRONTEND_BUILD_DIR.is_dir():
-        return (HTTPStatus.NOT_FOUND, [], b"Frontend build not found. Run npm run build.\n")
+        return WSResponse(404, "Not Found", WSHeaders(), b"Frontend build not found. Run npm run build.\n")
 
     if path == "/":
         path = "/index.html"
@@ -746,12 +750,12 @@ async def process_request(path, request_headers):
         file_path = FRONTEND_BUILD_DIR / "index.html"
 
     if not file_path.is_file():
-        return (HTTPStatus.NOT_FOUND, [], b"Not found\n")
+        return WSResponse(404, "Not Found", WSHeaders(), b"Not found\n")
 
     content_type = MIME_OVERRIDES.get(file_path.suffix, mimetypes.guess_type(str(file_path))[0] or "application/octet-stream")
     body = file_path.read_bytes()
-    headers = [("Content-Type", content_type), ("Content-Length", str(len(body)))]
-    return (HTTPStatus.OK, headers, body)
+    headers = WSHeaders([("Content-Type", content_type), ("Content-Length", str(len(body)))])
+    return WSResponse(200, "OK", headers, body)
 
 
 # ─────────────────────────── main ───────────────────────────
