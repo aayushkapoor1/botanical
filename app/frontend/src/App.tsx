@@ -130,6 +130,11 @@ function App() {
   const [scanStatus, setScanStatus] = useState("");
   const [plantsFoundCount, setPlantsFoundCount] = useState(0);
   const [plantFoundFlash, setPlantFoundFlash] = useState(false);
+  const [metrics, setMetrics] = useState<{ last_watered: string | null; last_ml_watered: number; total_ml_watered: number }>({
+    last_watered: null,
+    last_ml_watered: 0,
+    total_ml_watered: 0,
+  });
   const [debugMode, setDebugMode] = useState(false);
   const [mockCurrentDate, setMockCurrentDate] = useState<string | null>(null);
   const statusClickCountRef = useRef(0);
@@ -193,6 +198,16 @@ function App() {
             if (data.watered_log) setWateredDates(data.watered_log);
           } catch (e) {
             console.error("Failed to parse schedules:", e);
+          }
+          return;
+        }
+
+        if (msg.startsWith("METRICS ")) {
+          try {
+            const data = JSON.parse(msg.slice("METRICS ".length));
+            setMetrics(data);
+          } catch (e) {
+            console.error("Failed to parse metrics:", e);
           }
           return;
         }
@@ -503,19 +518,20 @@ function App() {
           </div>
         </section>
 
-        {/* Stats card - unimplemented */}
         <section className="card card--stats">
           <h2 className="card-title">Plant Stats</h2>
           <div className="stats-grid">
             <div className="stat-item">
               <span className="stat-label">Last watered</span>
-              <span className="stat-value stat-value--unimplemented">—</span>
-              <span className="unimplemented-badge">Unimplemented</span>
+              <span className="stat-value">{metrics.last_watered ?? "Never"}</span>
             </div>
             <div className="stat-item">
-              <span className="stat-label">MLs watered</span>
-              <span className="stat-value stat-value--unimplemented">—</span>
-              <span className="unimplemented-badge">Unimplemented</span>
+              <span className="stat-label">Last session</span>
+              <span className="stat-value">{metrics.last_ml_watered > 0 ? `${metrics.last_ml_watered} mL` : "—"}</span>
+            </div>
+            <div className="stat-item">
+              <span className="stat-label">Total watered</span>
+              <span className="stat-value">{metrics.total_ml_watered > 0 ? `${metrics.total_ml_watered} mL` : "—"}</span>
             </div>
           </div>
         </section>

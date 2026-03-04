@@ -116,6 +116,48 @@ connected_clients: set = set()
 
 PUMP_HOLD_MS = 30000  # max pump duration when holding button (safety cap)
 
+# ────────────────── Metrics persistence ─────────────────────
+METRICS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "metrics.json")
+ML_PER_SECOND = 1.33
+
+DEFAULT_METRICS = {
+    "last_watered": None,
+    "last_ml_watered": 0,
+    "total_ml_watered": 0,
+}
+
+
+def load_metrics() -> dict:
+    try:
+        with open(METRICS_FILE, "r") as f:
+            data = json.load(f)
+        for key in DEFAULT_METRICS:
+            data.setdefault(key, DEFAULT_METRICS[key])
+        return data
+    except (FileNotFoundError, json.JSONDecodeError):
+        return json.loads(json.dumps(DEFAULT_METRICS))
+
+
+def save_metrics(data: dict) -> None:
+    tmp_fd, tmp_path = tempfile.mkstemp(
+        dir=os.path.dirname(METRICS_FILE), suffix=".tmp"
+    )
+    try:
+        with os.fdopen(tmp_fd, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp_path, METRICS_FILE)
+        print(f"[METRICS] Saved to {METRICS_FILE}")
+    except Exception as e:
+        print(f"[METRICS] Failed to save: {e}")
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+metrics_data = load_metrics()
+
 # ────────────────── Schedule persistence ────────────────────
 SCHEDULE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schedules.json")
 PYTHON_WEEKDAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
@@ -172,6 +214,15 @@ def schedule_json() -> str:
 
 async def broadcast_schedules() -> None:
     msg = f"SCHEDULES {schedule_json()}"
+    for ws in list(connected_clients):
+        try:
+            await ws.send(msg)
+        except ConnectionClosed:
+            connected_clients.discard(ws)
+
+
+async def broadcast_metrics() -> None:
+    msg = f"METRICS {json.dumps(metrics_data)}"
     for ws in list(connected_clients):
         try:
             await ws.send(msg)
@@ -452,6 +503,10 @@ async def execute_scan(websocket) -> None:
             _latest_boxes.extend(boxes)
 
     try:
+        await websocket.send("Homing before scan...")
+        await _home_and_reset(loop)
+        await websocket.send("Homing complete — starting scan...")
+
         scan_fn = functools.partial(
             run_scan, ser, cam, model,
             progress_callback=on_progress,
@@ -483,8 +538,20 @@ async def execute_scan(websocket) -> None:
             time_str = now.strftime("%I:%M %p").lstrip("0")
             schedule_data["watered_log"][date_key] = time_str
             save_schedules(schedule_data)
+
+            plants_found = result.get("plants_found", 0)
+            water_time_s = plants_found * (_scan_module.WATER_MS / 1000.0)
+            ml_watered = round(water_time_s * ML_PER_SECOND, 2)
+            metrics_data["last_watered"] = now.strftime("%Y-%m-%d %I:%M %p").lstrip("0")
+            metrics_data["last_ml_watered"] = ml_watered
+            metrics_data["total_ml_watered"] = round(
+                metrics_data.get("total_ml_watered", 0) + ml_watered, 2
+            )
+            save_metrics(metrics_data)
+
             await websocket.send("Water all complete")
             await broadcast_schedules()
+            await broadcast_metrics()
 
     except ConnectionClosed:
         scan_cancel.set()
@@ -518,7 +585,7 @@ async def execute_scheduled_scan() -> None:
     def on_progress(msg: str):
         print(msg)
 
-    print("[SCHEDULER] Starting scheduled scan...")
+    print("[SCHEDULER] Homing before scheduled scan...")
 
     def on_boxes(boxes):
         with _boxes_lock:
@@ -526,6 +593,9 @@ async def execute_scheduled_scan() -> None:
             _latest_boxes.extend(boxes)
 
     try:
+        await _home_and_reset(loop)
+        print("[SCHEDULER] Homing complete — starting scan...")
+
         scan_fn = functools.partial(
             run_scan, ser, cam, model,
             progress_callback=on_progress,
@@ -544,8 +614,20 @@ async def execute_scheduled_scan() -> None:
             time_str = now.strftime("%I:%M %p").lstrip("0")
             schedule_data["watered_log"][date_key] = time_str
             save_schedules(schedule_data)
+
+            plants_found = result.get("plants_found", 0)
+            water_time_s = plants_found * (_scan_module.WATER_MS / 1000.0)
+            ml_watered = round(water_time_s * ML_PER_SECOND, 2)
+            metrics_data["last_watered"] = now.strftime("%Y-%m-%d %I:%M %p").lstrip("0")
+            metrics_data["last_ml_watered"] = ml_watered
+            metrics_data["total_ml_watered"] = round(
+                metrics_data.get("total_ml_watered", 0) + ml_watered, 2
+            )
+            save_metrics(metrics_data)
+
             print(f"[SCHEDULER] Scan complete — logged at {time_str}")
             await broadcast_schedules()
+            await broadcast_metrics()
     except Exception as e:
         print(f"[SCHEDULER] Error: {e}")
     finally:
@@ -656,6 +738,7 @@ async def handle_connection(websocket) -> None:
 
             if prefix == "GET_SCHEDULES":
                 await websocket.send(f"SCHEDULES {schedule_json()}")
+                await websocket.send(f"METRICS {json.dumps(metrics_data)}")
 
             elif prefix == "SET_SCHEDULES":
                 try:
