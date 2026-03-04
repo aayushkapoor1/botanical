@@ -761,6 +761,7 @@ async def send_video(websocket) -> None:
 
 # ───────────── Per-connection combined handler ──────────────
 async def handle_connection(websocket) -> None:
+    global app_password
     client = websocket.remote_address
     print(f"[WS] Client connected from {client}")
     connected_clients.add(websocket)
@@ -774,7 +775,30 @@ async def handle_connection(websocket) -> None:
             prefix = raw.split(" ", 1)[0].upper()
             print(f"[WS] Received: {prefix}")
 
-            if prefix == "GET_SCHEDULES":
+            if prefix == "LOGIN":
+                pw = raw[len("LOGIN "):] if len(raw) > len("LOGIN ") else ""
+                if pw == app_password:
+                    await websocket.send("LOGIN_OK")
+                else:
+                    await websocket.send("LOGIN_FAIL")
+
+            elif prefix == "CHANGE_PASSWORD":
+                try:
+                    payload = json.loads(raw[len("CHANGE_PASSWORD "):])
+                    current = payload.get("current_password", "")
+                    new_pw = payload.get("new_password", "")
+                    if current != app_password:
+                        await websocket.send("PASSWORD_FAIL Current password is incorrect.")
+                    elif len(new_pw) < 4:
+                        await websocket.send("PASSWORD_FAIL New password must be at least 4 characters.")
+                    else:
+                        app_password = new_pw
+                        save_password(new_pw)
+                        await websocket.send("PASSWORD_OK")
+                except Exception as e:
+                    await websocket.send(f"PASSWORD_FAIL {e}")
+
+            elif prefix == "GET_SCHEDULES":
                 await websocket.send(f"SCHEDULES {schedule_json()}")
                 await websocket.send(f"METRICS {json.dumps(metrics_data)}")
 
@@ -852,52 +876,13 @@ signal.signal(signal.SIGTERM, shutdown)
 MIME_OVERRIDES = {".js": "application/javascript", ".css": "text/css", ".html": "text/html"}
 
 
-def _json_response(status_code, data):
-    body = json.dumps(data).encode("utf-8")
-    headers = WSHeaders([
-        ("Content-Type", "application/json"),
-        ("Content-Length", str(len(body))),
-    ])
-    return WSResponse(status_code, "OK" if status_code == 200 else "Error", headers, body)
-
-
-def _get_body(request) -> bytes:
-    return getattr(request, "body", b"") or b""
-
-
 async def process_request(connection, request):
-    """Serve API endpoints and static frontend files for regular HTTP requests.
+    """Serve static frontend files for regular HTTP requests.
     WebSocket upgrade requests pass through to the WS handler."""
-    global app_password
-
     if request.headers.get("Upgrade"):
         return None
 
     path = request.path
-
-    if path == "/api/login":
-        try:
-            data = json.loads(_get_body(request))
-            if data.get("password") == app_password:
-                return _json_response(200, {"ok": True})
-            return _json_response(401, {"ok": False, "error": "Invalid password."})
-        except Exception as e:
-            return _json_response(400, {"ok": False, "error": str(e)})
-
-    if path == "/api/change-password":
-        try:
-            data = json.loads(_get_body(request))
-            current = data.get("current_password", "")
-            new_pw = data.get("new_password", "")
-            if current != app_password:
-                return _json_response(401, {"ok": False, "error": "Current password is incorrect."})
-            if len(new_pw) < 4:
-                return _json_response(400, {"ok": False, "error": "New password must be at least 4 characters."})
-            app_password = new_pw
-            save_password(new_pw)
-            return _json_response(200, {"ok": True})
-        except Exception as e:
-            return _json_response(400, {"ok": False, "error": str(e)})
 
     if not FRONTEND_BUILD_DIR.is_dir():
         return WSResponse(404, "Not Found", WSHeaders(), b"Frontend build not found. Run npm run build.\n")

@@ -60,28 +60,26 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError("");
-    try {
-      const res = await fetch("/api/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        localStorage.setItem("botanical_auth", "true");
-        onLogin();
-      } else {
-        setError(data.error || "Invalid password.");
+    const ws = new WebSocket(WS_URL);
+    ws.onopen = () => ws.send("LOGIN " + password);
+    ws.onmessage = (evt) => {
+      if (typeof evt.data === "string") {
+        if (evt.data === "LOGIN_OK") {
+          localStorage.setItem("botanical_auth", "true");
+          onLogin();
+        } else if (evt.data.startsWith("LOGIN_FAIL")) {
+          setError("Invalid password.");
+        }
       }
-    } catch {
-      setError("Could not reach server.");
-    } finally {
+      ws.close();
       setLoading(false);
-    }
+    };
+    ws.onerror = () => { setError("Could not reach server."); setLoading(false); };
+    ws.onclose = () => setLoading(false);
   };
 
   return (
@@ -111,14 +109,14 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
   );
 }
 
-function SettingsPanel() {
+function SettingsPanel({ socketRef }: { socketRef: React.RefObject<WebSocket | null> }) {
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const [confirmPw, setConfirmPw] = useState("");
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const handleChange = async (e: React.FormEvent) => {
+  const handleChange = (e: React.FormEvent) => {
     e.preventDefault();
     setMsg(null);
     if (newPw !== confirmPw) {
@@ -129,28 +127,35 @@ function SettingsPanel() {
       setMsg({ text: "New password must be at least 4 characters.", ok: false });
       return;
     }
+    const sock = socketRef.current;
+    if (!sock || sock.readyState !== WebSocket.OPEN) {
+      setMsg({ text: "Not connected to server.", ok: false });
+      return;
+    }
     setLoading(true);
-    try {
-      const res = await fetch("/api/change-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ current_password: currentPw, new_password: newPw }),
-      });
-      const data = await res.json();
-      if (data.ok) {
+    const payload = JSON.stringify({ current_password: currentPw, new_password: newPw });
+    sock.send("CHANGE_PASSWORD " + payload);
+  };
+
+  useEffect(() => {
+    const handler = (evt: MessageEvent) => {
+      if (typeof evt.data !== "string") return;
+      if (evt.data === "PASSWORD_OK") {
         setMsg({ text: "Password changed successfully.", ok: true });
         setCurrentPw("");
         setNewPw("");
         setConfirmPw("");
-      } else {
-        setMsg({ text: data.error || "Failed to change password.", ok: false });
+        setLoading(false);
+      } else if (evt.data.startsWith("PASSWORD_FAIL")) {
+        const reason = evt.data.slice("PASSWORD_FAIL ".length) || "Failed to change password.";
+        setMsg({ text: reason, ok: false });
+        setLoading(false);
       }
-    } catch {
-      setMsg({ text: "Could not reach server.", ok: false });
-    } finally {
-      setLoading(false);
-    }
-  };
+    };
+    const sock = socketRef.current;
+    sock?.addEventListener("message", handler);
+    return () => { sock?.removeEventListener("message", handler); };
+  }, [socketRef]);
 
   return (
     <section className="card card--settings card--full-width">
@@ -978,7 +983,7 @@ function App() {
         )}
 
         {activeTab === "settings" && (
-          <SettingsPanel />
+          <SettingsPanel socketRef={socketRef} />
         )}
       </main>
     </div>
