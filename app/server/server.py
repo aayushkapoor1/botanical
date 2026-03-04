@@ -59,12 +59,16 @@ model = None
 try:
     from cv_work.scan_water import run_scan, cmd_move_xy as _raw_cmd_move_xy, cmd_pump_on as _raw_cmd_pump_on
     import cv_work.scan_water as _scan_module
-    from ultralytics import YOLO
 
-    _model_path = os.path.join(PROJECT_ROOT, 'cv_work', 'yolov8n.pt')
-    model = YOLO(_model_path) if os.path.exists(_model_path) else YOLO("yolov8n.pt")
+    if _scan_module.DETECTION_MODE == "yolo":
+        from ultralytics import YOLO
+        _model_path = os.path.join(PROJECT_ROOT, 'cv_work', 'yolov8n.pt')
+        model = YOLO(_model_path) if os.path.exists(_model_path) else YOLO("yolov8n.pt")
+        print(f"[INIT] YOLO model loaded — scanning available")
+    else:
+        print(f"[INIT] HSV detection mode — scanning available (no YOLO model needed)")
+
     SCAN_AVAILABLE = True
-    print(f"[INIT] YOLO model loaded — scanning available")
 except ImportError as e:
     print(f"[INIT] Scanning not available ({e}). Manual controls still work.")
     _raw_cmd_move_xy = None
@@ -336,10 +340,10 @@ _boxes_lock = threading.Lock()
 
 
 def _overlay_inference_loop():
-    """Background thread: continuously runs YOLO on the latest camera frame
+    """Background thread: continuously runs detection on the latest camera frame
     and caches bounding boxes so the video stream can draw them."""
     while True:
-        if model is None or scan_in_progress:
+        if scan_in_progress:
             time.sleep(0.5)
             with _boxes_lock:
                 _latest_boxes.clear()
@@ -351,19 +355,25 @@ def _overlay_inference_loop():
             continue
 
         frame = _scan_module.digital_zoom(frame, _scan_module.ZOOM)
-        res = model.predict(
-            frame,
-            conf=_scan_module.CONF_THRES,
-            classes=[_scan_module.POTTED_PLANT_CLASS],
-            verbose=False,
-        )[0]
-
         boxes = []
-        if res.boxes is not None and len(res.boxes) > 0:
-            for box in res.boxes:
-                xyxy = box.xyxy[0].tolist()
-                conf = float(box.conf[0])
-                boxes.append((xyxy, conf))
+
+        if _scan_module.DETECTION_MODE == "hsv":
+            if _scan_module._detect_green_hsv(frame):
+                h, w = frame.shape[:2]
+                roi = _scan_module._crosshair_roi(w, h)
+                boxes.append((list(roi), 1.0))
+        elif model is not None:
+            res = model.predict(
+                frame,
+                conf=_scan_module.CONF_THRES,
+                classes=[_scan_module.POTTED_PLANT_CLASS],
+                verbose=False,
+            )[0]
+            if res.boxes is not None and len(res.boxes) > 0:
+                for box in res.boxes:
+                    xyxy = box.xyxy[0].tolist()
+                    conf = float(box.conf[0])
+                    boxes.append((xyxy, conf))
 
         with _boxes_lock:
             _latest_boxes.clear()
@@ -690,7 +700,7 @@ async def scheduler_loop() -> None:
             print(f"[SCHEDULER] {current_hhmm} — skipping (scan already in progress)")
             continue
         if not SCAN_AVAILABLE:
-            print(f"[SCHEDULER] {current_hhmm} — skipping (YOLO model not loaded)")
+            print(f"[SCHEDULER] {current_hhmm} — skipping (scan module not loaded)")
             continue
         if not (ser and ser.is_open):
             print(f"[SCHEDULER] {current_hhmm} — skipping (serial not connected)")

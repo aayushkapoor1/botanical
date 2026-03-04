@@ -2,6 +2,7 @@ import time
 import glob
 import serial
 import cv2
+import numpy as np
 from ultralytics import YOLO
 
 # Plug the esp into the pi with usb 
@@ -49,6 +50,16 @@ WATER_MS = 5000
 # --- Post-water skip ---
 # After watering a plant, skip this many cells forward to avoid rescanning it.
 SKIP_CELLS_AFTER_WATER = 2
+
+# --- Detection mode ---
+# "hsv"  = fast green-pixel detection (best for top-down views)
+# "yolo" = YOLOv8 potted-plant class (better for side/angle views)
+DETECTION_MODE = "hsv"
+
+# --- HSV green detection settings ---
+HSV_GREEN_LO = (30, 40, 40)   # lower bound (H, S, V)
+HSV_GREEN_HI = (90, 255, 255) # upper bound
+GREEN_AREA_THRESH = 0.05       # fraction of crosshair region that must be green
 
 # --- YOLO model settings ---
 MODEL_NAME = "yolov8n.pt"
@@ -232,6 +243,31 @@ def _box_centered(boxes, frame_w, frame_h):
     return False
 
 
+def _crosshair_roi(frame_w, frame_h):
+    """Return (x1, y1, x2, y2) pixel coords of the crosshair region."""
+    half_w = frame_w * CROSSHAIR_RATIO / 2
+    half_h = frame_h * CROSSHAIR_RATIO / 2
+    cx = frame_w / 2
+    cy = frame_h / 2 + frame_h * CROSSHAIR_Y_OFFSET
+    return (
+        max(int(cx - half_w), 0),
+        max(int(cy - half_h), 0),
+        min(int(cx + half_w), frame_w),
+        min(int(cy + half_h), frame_h),
+    )
+
+
+def _detect_green_hsv(frame):
+    """Return True if enough green pixels exist inside the crosshair region."""
+    h, w = frame.shape[:2]
+    x1, y1, x2, y2 = _crosshair_roi(w, h)
+    roi = frame[y1:y2, x1:x2]
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, np.array(HSV_GREEN_LO), np.array(HSV_GREEN_HI))
+    green_fraction = mask.sum() / 255.0 / mask.size
+    return green_fraction >= GREEN_AREA_THRESH
+
+
 # ============================================================
 # VISION DEBOUNCING
 # ============================================================
@@ -281,6 +317,7 @@ def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = Tru
     Returns True if a debounced "new plant found" happens during that window.
     If frame_callback is provided, each raw frame is passed to it for streaming.
     If box_callback is provided, it receives a list of (xyxy, conf) tuples each frame.
+    model may be None when DETECTION_MODE == "hsv".
     """
     deb = PlantDebouncer()
     t0 = time.time()
@@ -295,23 +332,31 @@ def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = Tru
         if frame_callback:
             frame_callback(frame)
 
-        res = model.predict(frame, conf=CONF_THRES, classes=[POTTED_PLANT_CLASS], verbose=False)[0]
-
-        if box_callback:
-            boxes_out = []
-            if res.boxes is not None and len(res.boxes) > 0:
-                for box in res.boxes:
-                    xyxy = box.xyxy[0].tolist()
-                    conf = float(box.conf[0])
-                    boxes_out.append((xyxy, conf))
-            box_callback(boxes_out)
-
         h, w = frame.shape[:2]
-        plant_present = (
-            res.boxes is not None
-            and len(res.boxes) > 0
-            and _box_centered(res.boxes, w, h)
-        )
+
+        if DETECTION_MODE == "hsv":
+            plant_present = _detect_green_hsv(frame)
+            if box_callback:
+                if plant_present:
+                    x1, y1, x2, y2 = _crosshair_roi(w, h)
+                    box_callback([([x1, y1, x2, y2], 1.0)])
+                else:
+                    box_callback([])
+        else:
+            res = model.predict(frame, conf=CONF_THRES, classes=[POTTED_PLANT_CLASS], verbose=False)[0]
+            if box_callback:
+                boxes_out = []
+                if res.boxes is not None and len(res.boxes) > 0:
+                    for box in res.boxes:
+                        xyxy = box.xyxy[0].tolist()
+                        conf = float(box.conf[0])
+                        boxes_out.append((xyxy, conf))
+                box_callback(boxes_out)
+            plant_present = (
+                res.boxes is not None
+                and len(res.boxes) > 0
+                and _box_centered(res.boxes, w, h)
+            )
 
         triggered = deb.update(plant_present)
 
@@ -341,7 +386,7 @@ def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = Tru
 # MAIN SCANNING LOGIC (RASTER / SNAKE PATTERN)
 # ============================================================
 
-def run_scan(ser, cap, model, progress_callback=None, cancel_event=None,
+def run_scan(ser, cap, model=None, progress_callback=None, cancel_event=None,
              frame_callback=None, box_callback=None):
     """
     Execute the full raster scan, detecting and watering plants.
@@ -349,7 +394,7 @@ def run_scan(ser, cap, model, progress_callback=None, cancel_event=None,
     Args:
         ser: Open serial.Serial connection to ESP.
         cap: Open cv2.VideoCapture.
-        model: Loaded YOLO model instance.
+        model: Loaded YOLO model instance (only required when DETECTION_MODE == "yolo").
         progress_callback: Optional callable(str) invoked with status messages.
         cancel_event: Optional threading.Event; set it to abort the scan early.
         frame_callback: Optional callable(numpy.ndarray) called with each camera
@@ -460,7 +505,11 @@ def main():
     for ln in read_lines(ser):
         print("[ESP]", ln)
 
-    model = YOLO(MODEL_NAME)
+    model = None
+    if DETECTION_MODE == "yolo":
+        model = YOLO(MODEL_NAME)
+    else:
+        print(f"[DETECT] Using HSV green detection (threshold={GREEN_AREA_THRESH})")
 
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
