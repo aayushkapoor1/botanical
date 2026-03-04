@@ -4,7 +4,6 @@ import "./App.css";
 const WS_URL =
   process.env.REACT_APP_WS_URL ||
   `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
-const APP_PASSWORD = "botanical2026";
 
 const MESSAGE_INTERVAL_MS = 100;
 
@@ -57,17 +56,31 @@ function getWeeklyTimesForDate(dateKey: string, schedules: Record<DayKey, string
 }
 
 function LoginScreen({ onLogin }: { onLogin: () => void }) {
-  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (password === APP_PASSWORD) {
-      localStorage.setItem("botanical_auth", "true");
-      onLogin();
-    } else {
-      setError("Invalid credentials. Please try again.");
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        localStorage.setItem("botanical_auth", "true");
+        onLogin();
+      } else {
+        setError(data.error || "Invalid password.");
+      }
+    } catch {
+      setError("Could not reach server.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -77,17 +90,6 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
         <h1 className="login-logo">Botanical</h1>
         <p className="login-subtitle">Sign in to access your gantry system</p>
         <form className="login-form" onSubmit={handleSubmit}>
-          <label className="login-label">
-            Email
-            <input
-              type="email"
-              className="login-input"
-              placeholder="you@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              autoComplete="email"
-            />
-          </label>
           <label className="login-label">
             Password
             <input
@@ -100,10 +102,103 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
             />
           </label>
           {error && <p className="login-error">{error}</p>}
-          <button type="submit" className="login-btn">Sign in</button>
+          <button type="submit" className="login-btn" disabled={loading}>
+            {loading ? "Signing in…" : "Sign in"}
+          </button>
         </form>
       </div>
     </div>
+  );
+}
+
+function SettingsPanel() {
+  const [currentPw, setCurrentPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setMsg(null);
+    if (newPw !== confirmPw) {
+      setMsg({ text: "New passwords do not match.", ok: false });
+      return;
+    }
+    if (newPw.length < 4) {
+      setMsg({ text: "New password must be at least 4 characters.", ok: false });
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch("/api/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ current_password: currentPw, new_password: newPw }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setMsg({ text: "Password changed successfully.", ok: true });
+        setCurrentPw("");
+        setNewPw("");
+        setConfirmPw("");
+      } else {
+        setMsg({ text: data.error || "Failed to change password.", ok: false });
+      }
+    } catch {
+      setMsg({ text: "Could not reach server.", ok: false });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <section className="card card--settings card--full-width">
+      <h2 className="card-title">Change Password</h2>
+      <form className="settings-form" onSubmit={handleChange}>
+        <label className="settings-label">
+          Current password
+          <input
+            type="password"
+            className="settings-input"
+            value={currentPw}
+            onChange={(e) => setCurrentPw(e.target.value)}
+            autoComplete="current-password"
+            required
+          />
+        </label>
+        <label className="settings-label">
+          New password
+          <input
+            type="password"
+            className="settings-input"
+            value={newPw}
+            onChange={(e) => setNewPw(e.target.value)}
+            autoComplete="new-password"
+            required
+          />
+        </label>
+        <label className="settings-label">
+          Confirm new password
+          <input
+            type="password"
+            className="settings-input"
+            value={confirmPw}
+            onChange={(e) => setConfirmPw(e.target.value)}
+            autoComplete="new-password"
+            required
+          />
+        </label>
+        {msg && (
+          <p className={`settings-msg ${msg.ok ? "settings-msg--ok" : "settings-msg--err"}`}>
+            {msg.text}
+          </p>
+        )}
+        <button type="submit" className="settings-btn" disabled={loading}>
+          {loading ? "Saving…" : "Update password"}
+        </button>
+      </form>
+    </section>
   );
 }
 
@@ -116,7 +211,7 @@ function App() {
   const sendTimerRef = useRef<number | null>(null);
   const pumpHeldRef = useRef(false);
   const [status, setStatus] = useState("Connecting…");
-  const [activeTab, setActiveTab] = useState<"dashboard" | "calendar">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "calendar" | "settings">("dashboard");
   const [schedules, setSchedules] = useState<Record<DayKey, string[]>>(() =>
     DAYS.reduce((acc, { key }) => ({ ...acc, [key]: [] }), {} as Record<DayKey, string[]>)
   );
@@ -350,6 +445,12 @@ function App() {
               onClick={() => setActiveTab("calendar")}
             >
               Calendar
+            </button>
+            <button
+              className={`tab ${activeTab === "settings" ? "tab--active" : ""}`}
+              onClick={() => setActiveTab("settings")}
+            >
+              Settings
             </button>
           </nav>
           <div className="header-right">
@@ -874,6 +975,10 @@ function App() {
               </>
             )}
           </section>
+        )}
+
+        {activeTab === "settings" && (
+          <SettingsPanel />
         )}
       </main>
     </div>

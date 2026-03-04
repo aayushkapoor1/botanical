@@ -117,6 +117,29 @@ connected_clients: set = set()
 
 PUMP_HOLD_MS = 30000  # max pump duration when holding button (safety cap)
 
+# ────────────────── Password persistence ──────────────────────
+PASSWORD_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "password.txt")
+DEFAULT_PASSWORD = "botanical2026"
+
+
+def load_password() -> str:
+    try:
+        with open(PASSWORD_FILE, "r") as f:
+            pw = f.read().strip()
+        return pw if pw else DEFAULT_PASSWORD
+    except FileNotFoundError:
+        save_password(DEFAULT_PASSWORD)
+        return DEFAULT_PASSWORD
+
+
+def save_password(pw: str) -> None:
+    with open(PASSWORD_FILE, "w") as f:
+        f.write(pw)
+    print(f"[AUTH] Password updated")
+
+
+app_password = load_password()
+
 # ────────────────── Metrics persistence ─────────────────────
 METRICS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "metrics.json")
 ML_PER_SECOND = 1.33
@@ -707,7 +730,7 @@ async def send_video(websocket) -> None:
                     frame,
                     (cx - half_w, cy - half_h),
                     (cx + half_w, cy + half_h),
-                    (0, 255, 0), 2,
+                    (61, 90, 45), 2,
                 )
 
                 with _boxes_lock:
@@ -719,7 +742,7 @@ async def send_video(websocket) -> None:
                     box_cy = (y1 + y2) // 2
                     in_crosshair = (abs(box_cx - cx) <= half_w
                                     and abs(box_cy - cy) <= half_h)
-                    color = (0, 255, 0) if in_crosshair else (0, 0, 255)
+                    color = (61, 90, 45) if in_crosshair else (0, 0, 255)
                     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
                     cv2.putText(frame, f"{conf:.0%}", (x1, y1 - 8),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
@@ -829,13 +852,52 @@ signal.signal(signal.SIGTERM, shutdown)
 MIME_OVERRIDES = {".js": "application/javascript", ".css": "text/css", ".html": "text/html"}
 
 
+def _json_response(status_code, data):
+    body = json.dumps(data).encode("utf-8")
+    headers = WSHeaders([
+        ("Content-Type", "application/json"),
+        ("Content-Length", str(len(body))),
+    ])
+    return WSResponse(status_code, "OK" if status_code == 200 else "Error", headers, body)
+
+
+def _get_body(request) -> bytes:
+    return getattr(request, "body", b"") or b""
+
+
 async def process_request(connection, request):
-    """Serve static frontend files for regular HTTP requests.
+    """Serve API endpoints and static frontend files for regular HTTP requests.
     WebSocket upgrade requests pass through to the WS handler."""
+    global app_password
+
     if request.headers.get("Upgrade"):
         return None
 
     path = request.path
+
+    if path == "/api/login":
+        try:
+            data = json.loads(_get_body(request))
+            if data.get("password") == app_password:
+                return _json_response(200, {"ok": True})
+            return _json_response(401, {"ok": False, "error": "Invalid password."})
+        except Exception as e:
+            return _json_response(400, {"ok": False, "error": str(e)})
+
+    if path == "/api/change-password":
+        try:
+            data = json.loads(_get_body(request))
+            current = data.get("current_password", "")
+            new_pw = data.get("new_password", "")
+            if current != app_password:
+                return _json_response(401, {"ok": False, "error": "Current password is incorrect."})
+            if len(new_pw) < 4:
+                return _json_response(400, {"ok": False, "error": "New password must be at least 4 characters."})
+            app_password = new_pw
+            save_password(new_pw)
+            return _json_response(200, {"ok": True})
+        except Exception as e:
+            return _json_response(400, {"ok": False, "error": str(e)})
 
     if not FRONTEND_BUILD_DIR.is_dir():
         return WSResponse(404, "Not Found", WSHeaders(), b"Frontend build not found. Run npm run build.\n")
