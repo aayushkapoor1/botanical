@@ -40,7 +40,7 @@ Leave this terminal running.
 
 ```bash
 cd ~/botanical
-source .venv/bin/activate
+source venv/bin/activate
 cd ~/botanical/app/frontend && npm install && npm run build
 cd ~/botanical
 python app/server/server.py
