@@ -41,9 +41,7 @@ Leave this terminal running.
 ```bash
 cd ~/botanical
 source venv/bin/activate
-cd ~/botanical/app/frontend && npm install && npm run build
-cd ~/botanical
-python app/server/server.py
+cd ~/botanical/app/frontend && npm install && npm run build && cd ~/botanical && python app/server/server.py
 ```
 
 The server starts on port 8000, serving the React build and the WebSocket API.
