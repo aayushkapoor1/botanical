@@ -112,6 +112,7 @@ scan_in_progress = False
 scan_cancel = threading.Event()
 move_in_progress = False
 pump_in_progress = False
+pump_start_time: float | None = None
 connected_clients: set = set()
 
 PUMP_HOLD_MS = 30000  # max pump duration when holding button (safety cap)
@@ -352,10 +353,10 @@ if SCAN_AVAILABLE:
 
 # ────────────────────── Movement logic ──────────────────────
 DIRECTION_MAP = {
-    "UP":    (0.0, -JOG_STEP_MM),
-    "DOWN":  (0.0,  JOG_STEP_MM),
-    "LEFT":  (-JOG_STEP_MM, 0.0),
-    "RIGHT": ( JOG_STEP_MM, 0.0),
+    "UP":    ( JOG_STEP_MM, 0.0),
+    "DOWN":  (-JOG_STEP_MM, 0.0),
+    "LEFT":  (0.0,  JOG_STEP_MM),
+    "RIGHT": (0.0, -JOG_STEP_MM),
 }
 
 
@@ -442,7 +443,7 @@ def pump_off_sync() -> None:
 
 async def process_command(cmd_raw: str) -> str:
     """Handle movement / calibration / pump commands."""
-    global pending_direction, pump_in_progress
+    global pending_direction, pump_in_progress, pump_start_time
 
     if scan_in_progress:
         return "Scan in progress - controls locked"
@@ -471,13 +472,26 @@ async def process_command(cmd_raw: str) -> str:
         if pump_in_progress:
             return "Pump already running"
         pump_in_progress = True
+        pump_start_time = time.time()
         pump_on_sync()
         return "Pump on"
 
     if cmd == "PUMP_OFF":
         if pump_in_progress:
             pump_off_sync()
+            if pump_start_time is not None:
+                duration_s = time.time() - pump_start_time
+                ml_watered = round(duration_s * ML_PER_SECOND, 2)
+                now = datetime.now()
+                metrics_data["last_watered"] = now.strftime("%Y-%m-%d %I:%M %p").lstrip("0")
+                metrics_data["total_ml_watered"] = round(
+                    metrics_data.get("total_ml_watered", 0) + ml_watered, 2
+                )
+                save_metrics(metrics_data)
+                print(f"[PUMP] Manual water: {duration_s:.1f}s → {ml_watered} mL")
+                await broadcast_metrics()
             pump_in_progress = False
+            pump_start_time = None
         return "Pump off"
 
     return "Unknown command"
