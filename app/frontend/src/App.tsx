@@ -130,9 +130,8 @@ function App() {
   const [scanStatus, setScanStatus] = useState("");
   const [plantsFoundCount, setPlantsFoundCount] = useState(0);
   const [plantFoundFlash, setPlantFoundFlash] = useState(false);
-  const [metrics, setMetrics] = useState<{ last_watered: string | null; last_ml_watered: number; total_ml_watered: number }>({
+  const [metrics, setMetrics] = useState<{ last_watered: string | null; total_ml_watered: number }>({
     last_watered: null,
-    last_ml_watered: 0,
     total_ml_watered: 0,
   });
   const [debugMode, setDebugMode] = useState(false);
@@ -526,12 +525,8 @@ function App() {
               <span className="stat-value">{metrics.last_watered ?? "Never"}</span>
             </div>
             <div className="stat-item">
-              <span className="stat-label">Last session</span>
-              <span className="stat-value">{metrics.last_ml_watered > 0 ? `${metrics.last_ml_watered} mL` : "—"}</span>
-            </div>
-            <div className="stat-item">
               <span className="stat-label">Total watered</span>
-              <span className="stat-value">{metrics.total_ml_watered > 0 ? `${metrics.total_ml_watered} mL` : "—"}</span>
+              <span className="stat-value">{`${metrics.total_ml_watered} mL`}</span>
             </div>
           </div>
         </section>
