@@ -76,6 +76,10 @@ COOLDOWN_S = 1.5
 # 0.25 = center 25% of width and height.
 CROSSHAIR_RATIO = 0.30
 
+# Vertical offset for the crosshair center, as a fraction of frame height.
+# Positive = shift down. Adjust if the hose nozzle isn't aligned with frame center.
+CROSSHAIR_Y_OFFSET = 0.20
+
 
 # ============================================================
 # DIGITAL ZOOM
@@ -216,7 +220,8 @@ def _box_centered(boxes, frame_w, frame_h):
     """Return True if any bounding box's center falls inside the crosshair region."""
     half_w = frame_w * CROSSHAIR_RATIO / 2
     half_h = frame_h * CROSSHAIR_RATIO / 2
-    fcx, fcy = frame_w / 2, frame_h / 2
+    fcx = frame_w / 2
+    fcy = frame_h / 2 + frame_h * CROSSHAIR_Y_OFFSET
 
     for box in boxes.xyxy:
         x1, y1, x2, y2 = box[:4]

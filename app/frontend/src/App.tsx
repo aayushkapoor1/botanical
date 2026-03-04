@@ -1,6 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import "./App.css";
 
+const WS_URL =
+  process.env.REACT_APP_WS_URL ||
+  `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
+
 const MESSAGE_INTERVAL_MS = 100;
 
 function getCalendarDays(year: number, month: number) {
@@ -51,13 +55,169 @@ function getWeeklyTimesForDate(dateKey: string, schedules: Record<DayKey, string
   return schedules[dayKey] ?? [];
 }
 
+function LoginScreen({ onLogin }: { onLogin: () => void }) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    const ws = new WebSocket(WS_URL);
+    ws.binaryType = "arraybuffer";
+    ws.onopen = () => ws.send("LOGIN " + password);
+    ws.onmessage = (evt) => {
+      if (typeof evt.data !== "string") return;
+      if (evt.data === "LOGIN_OK") {
+        localStorage.setItem("botanical_auth", "true");
+        ws.close();
+        onLogin();
+      } else if (evt.data.startsWith("LOGIN_FAIL")) {
+        setError("Invalid password.");
+        ws.close();
+        setLoading(false);
+      }
+    };
+    ws.onerror = () => { setError("Could not reach server."); setLoading(false); };
+    ws.onclose = () => setLoading(false);
+  };
+
+  return (
+    <div className="login-screen">
+      <div className="login-card">
+        <h1 className="login-logo">Botanical</h1>
+        <p className="login-subtitle">Sign in to access your gantry system</p>
+        <form className="login-form" onSubmit={handleSubmit}>
+          <label className="login-label">
+            Password
+            <input
+              type="password"
+              className="login-input"
+              placeholder="Enter password"
+              value={password}
+              onChange={(e) => { setPassword(e.target.value); setError(""); }}
+              autoComplete="current-password"
+            />
+          </label>
+          {error && <p className="login-error">{error}</p>}
+          <button type="submit" className="login-btn" disabled={loading}>
+            {loading ? "Signing in…" : "Sign in"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function SettingsPanel({ socketRef }: { socketRef: React.RefObject<WebSocket | null> }) {
+  const [currentPw, setCurrentPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleChange = (e: React.FormEvent) => {
+    e.preventDefault();
+    setMsg(null);
+    if (newPw !== confirmPw) {
+      setMsg({ text: "New passwords do not match.", ok: false });
+      return;
+    }
+    if (newPw.length < 4) {
+      setMsg({ text: "New password must be at least 4 characters.", ok: false });
+      return;
+    }
+    const sock = socketRef.current;
+    if (!sock || sock.readyState !== WebSocket.OPEN) {
+      setMsg({ text: "Not connected to server.", ok: false });
+      return;
+    }
+    setLoading(true);
+    const payload = JSON.stringify({ current_password: currentPw, new_password: newPw });
+    sock.send("CHANGE_PASSWORD " + payload);
+  };
+
+  useEffect(() => {
+    const handler = (evt: MessageEvent) => {
+      if (typeof evt.data !== "string") return;
+      if (evt.data === "PASSWORD_OK") {
+        setMsg({ text: "Password changed successfully.", ok: true });
+        setCurrentPw("");
+        setNewPw("");
+        setConfirmPw("");
+        setLoading(false);
+      } else if (evt.data.startsWith("PASSWORD_FAIL")) {
+        const reason = evt.data.slice("PASSWORD_FAIL ".length) || "Failed to change password.";
+        setMsg({ text: reason, ok: false });
+        setLoading(false);
+      }
+    };
+    const sock = socketRef.current;
+    sock?.addEventListener("message", handler);
+    return () => { sock?.removeEventListener("message", handler); };
+  }, [socketRef]);
+
+  return (
+    <section className="card card--settings card--full-width">
+      <h2 className="card-title">Change Password</h2>
+      <form className="settings-form" onSubmit={handleChange}>
+        <label className="settings-label">
+          Current password
+          <input
+            type="password"
+            className="settings-input"
+            value={currentPw}
+            onChange={(e) => setCurrentPw(e.target.value)}
+            autoComplete="current-password"
+            required
+          />
+        </label>
+        <label className="settings-label">
+          New password
+          <input
+            type="password"
+            className="settings-input"
+            value={newPw}
+            onChange={(e) => setNewPw(e.target.value)}
+            autoComplete="new-password"
+            required
+          />
+        </label>
+        <label className="settings-label">
+          Confirm new password
+          <input
+            type="password"
+            className="settings-input"
+            value={confirmPw}
+            onChange={(e) => setConfirmPw(e.target.value)}
+            autoComplete="new-password"
+            required
+          />
+        </label>
+        {msg && (
+          <p className={`settings-msg ${msg.ok ? "settings-msg--ok" : "settings-msg--err"}`}>
+            {msg.text}
+          </p>
+        )}
+        <button type="submit" className="settings-btn" disabled={loading}>
+          {loading ? "Saving…" : "Update password"}
+        </button>
+      </form>
+    </section>
+  );
+}
+
 function App() {
+  const [authenticated, setAuthenticated] = useState(
+    () => localStorage.getItem("botanical_auth") === "true"
+  );
   const socketRef = useRef<WebSocket | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const sendTimerRef = useRef<number | null>(null);
   const pumpHeldRef = useRef(false);
   const [status, setStatus] = useState("Connecting…");
-  const [activeTab, setActiveTab] = useState<"dashboard" | "calendar">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "calendar" | "settings">("dashboard");
   const [schedules, setSchedules] = useState<Record<DayKey, string[]>>(() =>
     DAYS.reduce((acc, { key }) => ({ ...acc, [key]: [] }), {} as Record<DayKey, string[]>)
   );
@@ -71,6 +231,10 @@ function App() {
   const [scanStatus, setScanStatus] = useState("");
   const [plantsFoundCount, setPlantsFoundCount] = useState(0);
   const [plantFoundFlash, setPlantFoundFlash] = useState(false);
+  const [metrics, setMetrics] = useState<{ last_watered: string | null; total_ml_watered: number }>({
+    last_watered: null,
+    total_ml_watered: 0,
+  });
   const [debugMode, setDebugMode] = useState(false);
   const [mockCurrentDate, setMockCurrentDate] = useState<string | null>(null);
   const statusClickCountRef = useRef(0);
@@ -111,7 +275,7 @@ function App() {
 
   /* --- WebSocket setup --------------------------------------------------- */
   useEffect(() => {
-    const socket = new WebSocket("ws://10.40.227.209:8000");
+    const socket = new WebSocket(WS_URL);
     socket.binaryType = "arraybuffer";
 
     socket.onopen = () => {
@@ -134,6 +298,16 @@ function App() {
             if (data.watered_log) setWateredDates(data.watered_log);
           } catch (e) {
             console.error("Failed to parse schedules:", e);
+          }
+          return;
+        }
+
+        if (msg.startsWith("METRICS ")) {
+          try {
+            const data = JSON.parse(msg.slice("METRICS ".length));
+            setMetrics(data);
+          } catch (e) {
+            console.error("Failed to parse metrics:", e);
           }
           return;
         }
@@ -255,6 +429,10 @@ function App() {
     onTouchEnd: stopSending,
   });
 
+  if (!authenticated) {
+    return <LoginScreen onLogin={() => setAuthenticated(true)} />;
+  }
+
   return (
     <div className="app">
       {/* Header */}
@@ -274,16 +452,34 @@ function App() {
             >
               Calendar
             </button>
+            <button
+              className={`tab ${activeTab === "settings" ? "tab--active" : ""}`}
+              onClick={() => setActiveTab("settings")}
+            >
+              Settings
+            </button>
           </nav>
-          <button
-            type="button"
-            className="status-badge"
-            data-status={status.toLowerCase().includes("connect") ? "connected" : "disconnected"}
-            onClick={handleStatusClick}
-          >
-            <span className="status-dot" />
-            {status}
-          </button>
+          <div className="header-right">
+            <button
+              type="button"
+              className="status-badge"
+              data-status={status.toLowerCase().includes("connect") ? "connected" : "disconnected"}
+              onClick={handleStatusClick}
+            >
+              <span className="status-dot" />
+              {status}
+            </button>
+            <button
+              type="button"
+              className="logout-btn"
+              onClick={() => {
+                localStorage.removeItem("botanical_auth");
+                setAuthenticated(false);
+              }}
+            >
+              Sign out
+            </button>
+          </div>
         </div>
       </header>
 
@@ -428,19 +624,16 @@ function App() {
           </div>
         </section>
 
-        {/* Stats card - unimplemented */}
         <section className="card card--stats">
           <h2 className="card-title">Plant Stats</h2>
           <div className="stats-grid">
             <div className="stat-item">
               <span className="stat-label">Last watered</span>
-              <span className="stat-value stat-value--unimplemented">—</span>
-              <span className="unimplemented-badge">Unimplemented</span>
+              <span className="stat-value">{metrics.last_watered ?? "Never"}</span>
             </div>
             <div className="stat-item">
-              <span className="stat-label">MLs watered</span>
-              <span className="stat-value stat-value--unimplemented">—</span>
-              <span className="unimplemented-badge">Unimplemented</span>
+              <span className="stat-label">Total watered</span>
+              <span className="stat-value">{`${metrics.total_ml_watered} mL`}</span>
             </div>
           </div>
         </section>
@@ -788,6 +981,10 @@ function App() {
               </>
             )}
           </section>
+        )}
+
+        {activeTab === "settings" && (
+          <SettingsPanel socketRef={socketRef} />
         )}
       </main>
     </div>

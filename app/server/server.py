@@ -13,6 +13,7 @@ import asyncio
 import cv2
 import functools
 import json
+import mimetypes
 import os
 import serial
 import signal
@@ -21,8 +22,12 @@ import tempfile
 import threading
 import time
 from datetime import datetime
+from http import HTTPStatus
+from pathlib import Path
 import websockets
 from websockets.exceptions import ConnectionClosed
+from websockets.datastructures import Headers as WSHeaders
+from websockets.http11 import Response as WSResponse
 
 # ────────────────────────── Config ──────────────────────────
 SERIAL_PORT = "/dev/ttyUSB0"
@@ -38,8 +43,10 @@ CAM_HEIGHT = 480
 JOG_STEP_MM = 100.0    # mm per manual direction press
 JPEG_QUALITY = 50      # 1-100, lower = smaller/faster, higher = sharper
 
-GANTRY_MAX_X_MM = 450.0  # travel limit on X axis
-GANTRY_MAX_Y_MM = 450.0  # travel limit on Y axis
+GANTRY_MAX_X_MM = 400.0  # travel limit on X axis
+GANTRY_MAX_Y_MM = 400.0  # travel limit on Y axis
+
+FRONTEND_BUILD_DIR = Path(__file__).resolve().parent.parent / "frontend" / "build"
 # ────────────────────────────────────────────────────────────
 
 # ──────────────── Scanning support (import cv_work) ─────────
@@ -105,9 +112,76 @@ scan_in_progress = False
 scan_cancel = threading.Event()
 move_in_progress = False
 pump_in_progress = False
+pump_start_time: float | None = None
 connected_clients: set = set()
 
 PUMP_HOLD_MS = 30000  # max pump duration when holding button (safety cap)
+
+# ────────────────── Password persistence ──────────────────────
+PASSWORD_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "password.txt")
+DEFAULT_PASSWORD = "botanical2026"
+
+
+def load_password() -> str:
+    try:
+        with open(PASSWORD_FILE, "r") as f:
+            pw = f.read().strip()
+        return pw if pw else DEFAULT_PASSWORD
+    except FileNotFoundError:
+        save_password(DEFAULT_PASSWORD)
+        return DEFAULT_PASSWORD
+
+
+def save_password(pw: str) -> None:
+    with open(PASSWORD_FILE, "w") as f:
+        f.write(pw)
+    print(f"[AUTH] Password updated")
+
+
+app_password = load_password()
+print(f"[INIT] Password loaded (file: {PASSWORD_FILE}, exists: {os.path.exists(PASSWORD_FILE)})")
+
+# ────────────────── Metrics persistence ─────────────────────
+METRICS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "metrics.json")
+ML_PER_SECOND = 1.33
+
+DEFAULT_METRICS = {
+    "last_watered": None,
+    "last_ml_watered": 0,
+    "total_ml_watered": 0,
+}
+
+
+def load_metrics() -> dict:
+    try:
+        with open(METRICS_FILE, "r") as f:
+            data = json.load(f)
+        for key in DEFAULT_METRICS:
+            data.setdefault(key, DEFAULT_METRICS[key])
+        return data
+    except (FileNotFoundError, json.JSONDecodeError):
+        return json.loads(json.dumps(DEFAULT_METRICS))
+
+
+def save_metrics(data: dict) -> None:
+    tmp_fd, tmp_path = tempfile.mkstemp(
+        dir=os.path.dirname(METRICS_FILE), suffix=".tmp"
+    )
+    try:
+        with os.fdopen(tmp_fd, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp_path, METRICS_FILE)
+        print(f"[METRICS] Saved to {METRICS_FILE}")
+    except Exception as e:
+        print(f"[METRICS] Failed to save: {e}")
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+metrics_data = load_metrics()
 
 # ────────────────── Schedule persistence ────────────────────
 SCHEDULE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schedules.json")
@@ -165,6 +239,15 @@ def schedule_json() -> str:
 
 async def broadcast_schedules() -> None:
     msg = f"SCHEDULES {schedule_json()}"
+    for ws in list(connected_clients):
+        try:
+            await ws.send(msg)
+        except ConnectionClosed:
+            connected_clients.discard(ws)
+
+
+async def broadcast_metrics() -> None:
+    msg = f"METRICS {json.dumps(metrics_data)}"
     for ws in list(connected_clients):
         try:
             await ws.send(msg)
@@ -294,10 +377,10 @@ if SCAN_AVAILABLE:
 
 # ────────────────────── Movement logic ──────────────────────
 DIRECTION_MAP = {
-    "UP":    (0.0, -JOG_STEP_MM),
-    "DOWN":  (0.0,  JOG_STEP_MM),
-    "LEFT":  (-JOG_STEP_MM, 0.0),
-    "RIGHT": ( JOG_STEP_MM, 0.0),
+    "UP":    ( JOG_STEP_MM, 0.0),
+    "DOWN":  (-JOG_STEP_MM, 0.0),
+    "LEFT":  (0.0,  JOG_STEP_MM),
+    "RIGHT": (0.0, -JOG_STEP_MM),
 }
 
 
@@ -384,7 +467,7 @@ def pump_off_sync() -> None:
 
 async def process_command(cmd_raw: str) -> str:
     """Handle movement / calibration / pump commands."""
-    global pending_direction, pump_in_progress
+    global pending_direction, pump_in_progress, pump_start_time
 
     if scan_in_progress:
         return "Scan in progress - controls locked"
@@ -413,13 +496,26 @@ async def process_command(cmd_raw: str) -> str:
         if pump_in_progress:
             return "Pump already running"
         pump_in_progress = True
+        pump_start_time = time.time()
         pump_on_sync()
         return "Pump on"
 
     if cmd == "PUMP_OFF":
         if pump_in_progress:
             pump_off_sync()
+            if pump_start_time is not None:
+                duration_s = time.time() - pump_start_time
+                ml_watered = round(duration_s * ML_PER_SECOND, 2)
+                now = datetime.now()
+                metrics_data["last_watered"] = now.strftime("%Y-%m-%d %I:%M %p").lstrip("0")
+                metrics_data["total_ml_watered"] = round(
+                    metrics_data.get("total_ml_watered", 0) + ml_watered, 2
+                )
+                save_metrics(metrics_data)
+                print(f"[PUMP] Manual water: {duration_s:.1f}s → {ml_watered} mL")
+                await broadcast_metrics()
             pump_in_progress = False
+            pump_start_time = None
         return "Pump off"
 
     return "Unknown command"
@@ -445,6 +541,10 @@ async def execute_scan(websocket) -> None:
             _latest_boxes.extend(boxes)
 
     try:
+        await websocket.send("Homing before scan...")
+        await _home_and_reset(loop)
+        await websocket.send("Homing complete — starting scan...")
+
         scan_fn = functools.partial(
             run_scan, ser, cam, model,
             progress_callback=on_progress,
@@ -476,8 +576,20 @@ async def execute_scan(websocket) -> None:
             time_str = now.strftime("%I:%M %p").lstrip("0")
             schedule_data["watered_log"][date_key] = time_str
             save_schedules(schedule_data)
+
+            plants_found = result.get("plants_found", 0)
+            water_time_s = plants_found * (_scan_module.WATER_MS / 1000.0)
+            ml_watered = round(water_time_s * ML_PER_SECOND, 2)
+            metrics_data["last_watered"] = now.strftime("%Y-%m-%d %I:%M %p").lstrip("0")
+            metrics_data["last_ml_watered"] = ml_watered
+            metrics_data["total_ml_watered"] = round(
+                metrics_data.get("total_ml_watered", 0) + ml_watered, 2
+            )
+            save_metrics(metrics_data)
+
             await websocket.send("Water all complete")
             await broadcast_schedules()
+            await broadcast_metrics()
 
     except ConnectionClosed:
         scan_cancel.set()
@@ -511,7 +623,7 @@ async def execute_scheduled_scan() -> None:
     def on_progress(msg: str):
         print(msg)
 
-    print("[SCHEDULER] Starting scheduled scan...")
+    print("[SCHEDULER] Homing before scheduled scan...")
 
     def on_boxes(boxes):
         with _boxes_lock:
@@ -519,6 +631,9 @@ async def execute_scheduled_scan() -> None:
             _latest_boxes.extend(boxes)
 
     try:
+        await _home_and_reset(loop)
+        print("[SCHEDULER] Homing complete — starting scan...")
+
         scan_fn = functools.partial(
             run_scan, ser, cam, model,
             progress_callback=on_progress,
@@ -537,8 +652,20 @@ async def execute_scheduled_scan() -> None:
             time_str = now.strftime("%I:%M %p").lstrip("0")
             schedule_data["watered_log"][date_key] = time_str
             save_schedules(schedule_data)
+
+            plants_found = result.get("plants_found", 0)
+            water_time_s = plants_found * (_scan_module.WATER_MS / 1000.0)
+            ml_watered = round(water_time_s * ML_PER_SECOND, 2)
+            metrics_data["last_watered"] = now.strftime("%Y-%m-%d %I:%M %p").lstrip("0")
+            metrics_data["last_ml_watered"] = ml_watered
+            metrics_data["total_ml_watered"] = round(
+                metrics_data.get("total_ml_watered", 0) + ml_watered, 2
+            )
+            save_metrics(metrics_data)
+
             print(f"[SCHEDULER] Scan complete — logged at {time_str}")
             await broadcast_schedules()
+            await broadcast_metrics()
     except Exception as e:
         print(f"[SCHEDULER] Error: {e}")
     finally:
@@ -595,7 +722,8 @@ async def send_video(websocket) -> None:
             if SCAN_AVAILABLE:
                 frame = _scan_module.digital_zoom(frame, _scan_module.ZOOM)
                 h, w = frame.shape[:2]
-                cx, cy = w // 2, h // 2
+                cx = w // 2
+                cy = int(h / 2 + h * _scan_module.CROSSHAIR_Y_OFFSET)
                 half_w = int(w * _scan_module.CROSSHAIR_RATIO / 2)
                 half_h = int(h * _scan_module.CROSSHAIR_RATIO / 2)
 
@@ -603,7 +731,7 @@ async def send_video(websocket) -> None:
                     frame,
                     (cx - half_w, cy - half_h),
                     (cx + half_w, cy + half_h),
-                    (0, 255, 0), 2,
+                    (61, 90, 45), 2,
                 )
 
                 with _boxes_lock:
@@ -615,7 +743,7 @@ async def send_video(websocket) -> None:
                     box_cy = (y1 + y2) // 2
                     in_crosshair = (abs(box_cx - cx) <= half_w
                                     and abs(box_cy - cy) <= half_h)
-                    color = (0, 255, 0) if in_crosshair else (0, 0, 255)
+                    color = (61, 90, 45) if in_crosshair else (0, 0, 255)
                     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
                     cv2.putText(frame, f"{conf:.0%}", (x1, y1 - 8),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
@@ -634,6 +762,7 @@ async def send_video(websocket) -> None:
 
 # ───────────── Per-connection combined handler ──────────────
 async def handle_connection(websocket) -> None:
+    global app_password
     client = websocket.remote_address
     print(f"[WS] Client connected from {client}")
     connected_clients.add(websocket)
@@ -647,8 +776,32 @@ async def handle_connection(websocket) -> None:
             prefix = raw.split(" ", 1)[0].upper()
             print(f"[WS] Received: {prefix}")
 
-            if prefix == "GET_SCHEDULES":
+            if prefix == "LOGIN":
+                pw = raw[len("LOGIN "):] if len(raw) > len("LOGIN ") else ""
+                if pw == app_password:
+                    await websocket.send("LOGIN_OK")
+                else:
+                    await websocket.send("LOGIN_FAIL")
+
+            elif prefix == "CHANGE_PASSWORD":
+                try:
+                    payload = json.loads(raw[len("CHANGE_PASSWORD "):])
+                    current = payload.get("current_password", "")
+                    new_pw = payload.get("new_password", "")
+                    if current != app_password:
+                        await websocket.send("PASSWORD_FAIL Current password is incorrect.")
+                    elif len(new_pw) < 4:
+                        await websocket.send("PASSWORD_FAIL New password must be at least 4 characters.")
+                    else:
+                        app_password = new_pw
+                        save_password(new_pw)
+                        await websocket.send("PASSWORD_OK")
+                except Exception as e:
+                    await websocket.send(f"PASSWORD_FAIL {e}")
+
+            elif prefix == "GET_SCHEDULES":
                 await websocket.send(f"SCHEDULES {schedule_json()}")
+                await websocket.send(f"METRICS {json.dumps(metrics_data)}")
 
             elif prefix == "SET_SCHEDULES":
                 try:
@@ -720,6 +873,37 @@ signal.signal(signal.SIGINT, shutdown)
 signal.signal(signal.SIGTERM, shutdown)
 
 
+# ──────────────── Static file serving (HTTP) ─────────────────
+MIME_OVERRIDES = {".js": "application/javascript", ".css": "text/css", ".html": "text/html"}
+
+
+async def process_request(connection, request):
+    """Serve static frontend files for regular HTTP requests.
+    WebSocket upgrade requests pass through to the WS handler."""
+    if request.headers.get("Upgrade"):
+        return None
+
+    path = request.path
+
+    if not FRONTEND_BUILD_DIR.is_dir():
+        return WSResponse(404, "Not Found", WSHeaders(), b"Frontend build not found. Run npm run build.\n")
+
+    if path == "/":
+        path = "/index.html"
+
+    file_path = FRONTEND_BUILD_DIR / path.lstrip("/")
+    if not file_path.is_file():
+        file_path = FRONTEND_BUILD_DIR / "index.html"
+
+    if not file_path.is_file():
+        return WSResponse(404, "Not Found", WSHeaders(), b"Not found\n")
+
+    content_type = MIME_OVERRIDES.get(file_path.suffix, mimetypes.guess_type(str(file_path))[0] or "application/octet-stream")
+    body = file_path.read_bytes()
+    headers = WSHeaders([("Content-Type", content_type), ("Content-Length", str(len(body)))])
+    return WSResponse(200, "OK", headers, body)
+
+
 # ─────────────────────────── main ───────────────────────────
 async def main() -> None:
     if ser and ser.is_open:
@@ -732,8 +916,16 @@ async def main() -> None:
 
     asyncio.create_task(scheduler_loop())
     print("[INIT] Scheduler started")
-    async with websockets.serve(handle_connection, WEBSOCKET_HOST, WEBSOCKET_PORT):
-        print(f"[INIT] WebSocket server running at ws://{WEBSOCKET_HOST}:{WEBSOCKET_PORT}")
+    if FRONTEND_BUILD_DIR.is_dir():
+        print(f"[INIT] Serving frontend from {FRONTEND_BUILD_DIR}")
+    else:
+        print(f"[INIT] Frontend build not found at {FRONTEND_BUILD_DIR} — run 'npm run build' in app/frontend")
+
+    async with websockets.serve(
+        handle_connection, WEBSOCKET_HOST, WEBSOCKET_PORT,
+        process_request=process_request,
+    ):
+        print(f"[INIT] Server running on http://{WEBSOCKET_HOST}:{WEBSOCKET_PORT}")
         await asyncio.Future()
 
 
