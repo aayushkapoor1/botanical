@@ -65,18 +65,19 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
     setLoading(true);
     setError("");
     const ws = new WebSocket(WS_URL);
+    ws.binaryType = "arraybuffer";
     ws.onopen = () => ws.send("LOGIN " + password);
     ws.onmessage = (evt) => {
-      if (typeof evt.data === "string") {
-        if (evt.data === "LOGIN_OK") {
-          localStorage.setItem("botanical_auth", "true");
-          onLogin();
-        } else if (evt.data.startsWith("LOGIN_FAIL")) {
-          setError("Invalid password.");
-        }
+      if (typeof evt.data !== "string") return;
+      if (evt.data === "LOGIN_OK") {
+        localStorage.setItem("botanical_auth", "true");
+        ws.close();
+        onLogin();
+      } else if (evt.data.startsWith("LOGIN_FAIL")) {
+        setError("Invalid password.");
+        ws.close();
+        setLoading(false);
       }
-      ws.close();
-      setLoading(false);
     };
     ws.onerror = () => { setError("Could not reach server."); setLoading(false); };
     ws.onclose = () => setLoading(false);

@@ -139,6 +139,7 @@ def save_password(pw: str) -> None:
 
 
 app_password = load_password()
+print(f"[INIT] Password loaded (file: {PASSWORD_FILE}, exists: {os.path.exists(PASSWORD_FILE)})")
 
 # ────────────────── Metrics persistence ─────────────────────
 METRICS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "metrics.json")
