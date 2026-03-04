@@ -34,17 +34,17 @@ SERIAL_PORT = None
 # --- Scan grid ---
 # The raster scan will visit ROWS x COLS "cells".
 COLS = 9
-ROWS = 5
+ROWS = 9
 
 # Step size between cells in mm (the ESP converts mm to steps)
 STEP_X_MM = 50.0
-STEP_Y_MM = 100.0
+STEP_Y_MM = 50.0
 
 # --- How long we sit and look at each cell ---
-DWELL_S = 0.3
+DWELL_S = 0.4
 
 # --- Watering duration ---
-WATER_MS = 5000
+WATER_MS = 1000
 
 # --- Post-water skip ---
 # After watering a plant, skip this many cells forward to avoid rescanning it.
