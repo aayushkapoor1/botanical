@@ -684,7 +684,8 @@ async def send_video(websocket) -> None:
             if SCAN_AVAILABLE:
                 frame = _scan_module.digital_zoom(frame, _scan_module.ZOOM)
                 h, w = frame.shape[:2]
-                cx, cy = w // 2, h // 2
+                cx = w // 2
+                cy = int(h / 2 + h * _scan_module.CROSSHAIR_Y_OFFSET)
                 half_w = int(w * _scan_module.CROSSHAIR_RATIO / 2)
                 half_h = int(h * _scan_module.CROSSHAIR_RATIO / 2)
 
