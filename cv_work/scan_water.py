@@ -45,7 +45,7 @@ STEP_Y_MM = 50
 DWELL_S = 0.3
 
 # --- Watering duration ---
-WATER_MS = 5000
+WATER_MS = 1000
 
 # --- Post-water skip ---
 # After watering a plant, skip this many cells forward to avoid rescanning it.
@@ -59,7 +59,7 @@ DETECTION_MODE = "hsv"
 # --- HSV green detection settings ---
 HSV_GREEN_LO = (30, 40, 40)   # lower bound (H, S, V)
 HSV_GREEN_HI = (90, 255, 255) # upper bound
-GREEN_AREA_THRESH = 0.05       # fraction of crosshair region that must be green
+GREEN_AREA_THRESH = 0.80       # fraction of crosshair region that must be green
 
 # --- YOLO model settings ---
 MODEL_NAME = "yolov8n.pt"
