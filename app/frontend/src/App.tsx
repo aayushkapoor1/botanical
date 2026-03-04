@@ -1,6 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import "./App.css";
 
+const WS_URL =
+  process.env.REACT_APP_WS_URL ||
+  `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
+const APP_PASSWORD = "botanical2026";
+
 const MESSAGE_INTERVAL_MS = 100;
 
 function getCalendarDays(year: number, month: number) {
@@ -51,7 +56,61 @@ function getWeeklyTimesForDate(dateKey: string, schedules: Record<DayKey, string
   return schedules[dayKey] ?? [];
 }
 
+function LoginScreen({ onLogin }: { onLogin: () => void }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (password === APP_PASSWORD) {
+      localStorage.setItem("botanical_auth", "true");
+      onLogin();
+    } else {
+      setError("Invalid credentials. Please try again.");
+    }
+  };
+
+  return (
+    <div className="login-screen">
+      <div className="login-card">
+        <h1 className="login-logo">Botanical</h1>
+        <p className="login-subtitle">Sign in to access your gantry system</p>
+        <form className="login-form" onSubmit={handleSubmit}>
+          <label className="login-label">
+            Email
+            <input
+              type="email"
+              className="login-input"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
+            />
+          </label>
+          <label className="login-label">
+            Password
+            <input
+              type="password"
+              className="login-input"
+              placeholder="Enter password"
+              value={password}
+              onChange={(e) => { setPassword(e.target.value); setError(""); }}
+              autoComplete="current-password"
+            />
+          </label>
+          {error && <p className="login-error">{error}</p>}
+          <button type="submit" className="login-btn">Sign in</button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 function App() {
+  const [authenticated, setAuthenticated] = useState(
+    () => localStorage.getItem("botanical_auth") === "true"
+  );
   const socketRef = useRef<WebSocket | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const sendTimerRef = useRef<number | null>(null);
@@ -111,7 +170,7 @@ function App() {
 
   /* --- WebSocket setup --------------------------------------------------- */
   useEffect(() => {
-    const socket = new WebSocket("ws://10.40.227.209:8000");
+    const socket = new WebSocket(WS_URL);
     socket.binaryType = "arraybuffer";
 
     socket.onopen = () => {
@@ -255,6 +314,10 @@ function App() {
     onTouchEnd: stopSending,
   });
 
+  if (!authenticated) {
+    return <LoginScreen onLogin={() => setAuthenticated(true)} />;
+  }
+
   return (
     <div className="app">
       {/* Header */}
@@ -275,15 +338,27 @@ function App() {
               Calendar
             </button>
           </nav>
-          <button
-            type="button"
-            className="status-badge"
-            data-status={status.toLowerCase().includes("connect") ? "connected" : "disconnected"}
-            onClick={handleStatusClick}
-          >
-            <span className="status-dot" />
-            {status}
-          </button>
+          <div className="header-right">
+            <button
+              type="button"
+              className="status-badge"
+              data-status={status.toLowerCase().includes("connect") ? "connected" : "disconnected"}
+              onClick={handleStatusClick}
+            >
+              <span className="status-dot" />
+              {status}
+            </button>
+            <button
+              type="button"
+              className="logout-btn"
+              onClick={() => {
+                localStorage.removeItem("botanical_auth");
+                setAuthenticated(false);
+              }}
+            >
+              Sign out
+            </button>
+          </div>
         </div>
       </header>
 

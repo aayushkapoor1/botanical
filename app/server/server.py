@@ -13,6 +13,7 @@ import asyncio
 import cv2
 import functools
 import json
+import mimetypes
 import os
 import serial
 import signal
@@ -21,6 +22,8 @@ import tempfile
 import threading
 import time
 from datetime import datetime
+from http import HTTPStatus
+from pathlib import Path
 import websockets
 from websockets.exceptions import ConnectionClosed
 
@@ -40,6 +43,8 @@ JPEG_QUALITY = 50      # 1-100, lower = smaller/faster, higher = sharper
 
 GANTRY_MAX_X_MM = 450.0  # travel limit on X axis
 GANTRY_MAX_Y_MM = 450.0  # travel limit on Y axis
+
+FRONTEND_BUILD_DIR = Path(__file__).resolve().parent.parent / "frontend" / "build"
 # ────────────────────────────────────────────────────────────
 
 # ──────────────── Scanning support (import cv_work) ─────────
@@ -720,6 +725,35 @@ signal.signal(signal.SIGINT, shutdown)
 signal.signal(signal.SIGTERM, shutdown)
 
 
+# ──────────────── Static file serving (HTTP) ─────────────────
+MIME_OVERRIDES = {".js": "application/javascript", ".css": "text/css", ".html": "text/html"}
+
+
+async def process_request(path, request_headers):
+    """Serve static frontend files for regular HTTP requests.
+    WebSocket upgrade requests pass through to the WS handler."""
+    if "Upgrade" in request_headers:
+        return None
+
+    if not FRONTEND_BUILD_DIR.is_dir():
+        return (HTTPStatus.NOT_FOUND, [], b"Frontend build not found. Run npm run build.\n")
+
+    if path == "/":
+        path = "/index.html"
+
+    file_path = FRONTEND_BUILD_DIR / path.lstrip("/")
+    if not file_path.is_file():
+        file_path = FRONTEND_BUILD_DIR / "index.html"
+
+    if not file_path.is_file():
+        return (HTTPStatus.NOT_FOUND, [], b"Not found\n")
+
+    content_type = MIME_OVERRIDES.get(file_path.suffix, mimetypes.guess_type(str(file_path))[0] or "application/octet-stream")
+    body = file_path.read_bytes()
+    headers = [("Content-Type", content_type), ("Content-Length", str(len(body)))]
+    return (HTTPStatus.OK, headers, body)
+
+
 # ─────────────────────────── main ───────────────────────────
 async def main() -> None:
     if ser and ser.is_open:
@@ -732,8 +766,16 @@ async def main() -> None:
 
     asyncio.create_task(scheduler_loop())
     print("[INIT] Scheduler started")
-    async with websockets.serve(handle_connection, WEBSOCKET_HOST, WEBSOCKET_PORT):
-        print(f"[INIT] WebSocket server running at ws://{WEBSOCKET_HOST}:{WEBSOCKET_PORT}")
+    if FRONTEND_BUILD_DIR.is_dir():
+        print(f"[INIT] Serving frontend from {FRONTEND_BUILD_DIR}")
+    else:
+        print(f"[INIT] Frontend build not found at {FRONTEND_BUILD_DIR} — run 'npm run build' in app/frontend")
+
+    async with websockets.serve(
+        handle_connection, WEBSOCKET_HOST, WEBSOCKET_PORT,
+        process_request=process_request,
+    ):
+        print(f"[INIT] Server running on http://{WEBSOCKET_HOST}:{WEBSOCKET_PORT}")
         await asyncio.Future()
 
 
