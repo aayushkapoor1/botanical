@@ -577,7 +577,7 @@ async def execute_scan(websocket) -> None:
             now = datetime.now()
             date_key = now.strftime("%Y-%m-%d")
             time_str = now.strftime("%I:%M %p").lstrip("0")
-            schedule_data["watered_log"][date_key] = time_str
+            schedule_data["watered_log"].setdefault(date_key, []).append(time_str)
             save_schedules(schedule_data)
 
             plants_found = result.get("plants_found", 0)
@@ -653,7 +653,7 @@ async def execute_scheduled_scan() -> None:
             now = datetime.now()
             date_key = now.strftime("%Y-%m-%d")
             time_str = now.strftime("%I:%M %p").lstrip("0")
-            schedule_data["watered_log"][date_key] = time_str
+            schedule_data["watered_log"].setdefault(date_key, []).append(time_str)
             save_schedules(schedule_data)
 
             plants_found = result.get("plants_found", 0)

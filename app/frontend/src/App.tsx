@@ -226,7 +226,7 @@ function App() {
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
   const [dateEvents, setDateEvents] = useState<Record<string, string[]>>({});
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  const [wateredDates, setWateredDates] = useState<Record<string, string>>({});
+  const [wateredDates, setWateredDates] = useState<Record<string, string[]>>({});
   const [waterAllState, setWaterAllState] = useState<"idle" | "watering" | "complete">("idle");
   const [scanStatus, setScanStatus] = useState("");
   const [plantsFoundCount, setPlantsFoundCount] = useState(0);
@@ -850,10 +850,9 @@ function App() {
                       const ampm = h < 12 ? "AM" : "PM";
                       return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
                     };
-                    const wateredTime = wateredDates[key];
+                    const wateredTimes = wateredDates[key] ?? [];
                     const isPast = key < todayKey;
-                    const showAsWatered = wateredTime || (isPast && allTimes.length > 0);
-                    const displayTime = wateredTime ?? (isPast && allTimes.length > 0 ? formatTime(allTimes[0]) : undefined);
+                    const showAsWatered = wateredTimes.length > 0 || (isPast && allTimes.length > 0);
                     return (
                       <button
                         key={key}
@@ -877,9 +876,14 @@ function App() {
                           {allTimes.length > 3 && (
                             <span className="month-day-more">+{allTimes.length - 3}</span>
                           )}
-                          {showAsWatered && displayTime && (
-                            <span className="month-day-watered" title={wateredTime ? `Watered at ${wateredTime}` : "Past (before today)"}>
-                              {displayTime}
+                          {showAsWatered && wateredTimes.length > 0 && wateredTimes.map((wt, wi) => (
+                            <span key={wi} className="month-day-watered" title={`Watered at ${wt}`}>
+                              {wt}
+                            </span>
+                          ))}
+                          {showAsWatered && wateredTimes.length === 0 && isPast && allTimes.length > 0 && (
+                            <span className="month-day-watered" title="Past (before today)">
+                              {formatTime(allTimes[0])}
                             </span>
                           )}
                         </div>
