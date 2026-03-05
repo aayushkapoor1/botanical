@@ -402,9 +402,12 @@ async def execute_move(direction: str) -> None:
             x, y = DIRECTION_MAP[direction]
             await loop.run_in_executor(None, cmd_move_xy, ser, x, y)
 
-            # Wait longer than the frontend's 100ms send interval.
-            # If a command arrives in this window the user is still
-            # holding → chain to the next move.  Otherwise → stop.
+            # Clear stale commands that arrived during the serial
+            # execution (e.g. hold-repeat messages from the frontend),
+            # then wait longer than the frontend's 100ms send interval.
+            # If a fresh command arrives in this window the user is
+            # still holding → chain to the next move.  Otherwise → stop.
+            pending_direction = None
             await asyncio.sleep(0.15)
 
             if pending_direction is not None:
