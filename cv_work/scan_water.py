@@ -314,6 +314,7 @@ def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = Tru
     """
     deb = PlantDebouncer()
     t0 = time.time()
+    frames_processed = 0
 
     while time.time() - t0 < duration_s:
         ok, frame = cap.read()
@@ -325,11 +326,22 @@ def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = Tru
         if frame_callback:
             frame_callback(frame)
 
+        infer_start = time.time()
         res = model.predict(frame, conf=CONF_THRES, classes=[POTTED_PLANT_CLASS], verbose=False)[0]
+        infer_ms = (time.time() - infer_start) * 1000
+        frames_processed += 1
+
+        n_boxes = len(res.boxes) if res.boxes is not None else 0
+        if n_boxes > 0:
+            confs = [float(b.conf[0]) for b in res.boxes]
+            centered = _box_centered(res.boxes, frame.shape[1], frame.shape[0])
+            print(f"[DETECT] {n_boxes} box(es) conf={confs} centered={centered} ({infer_ms:.0f}ms)")
+        else:
+            print(f"[DETECT] no boxes ({infer_ms:.0f}ms)")
 
         if box_callback:
             boxes_out = []
-            if res.boxes is not None and len(res.boxes) > 0:
+            if n_boxes > 0:
                 for box in res.boxes:
                     xyxy = box.xyxy[0].tolist()
                     conf = float(box.conf[0])
@@ -337,11 +349,7 @@ def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = Tru
             box_callback(boxes_out)
 
         h, w = frame.shape[:2]
-        plant_present = (
-            res.boxes is not None
-            and len(res.boxes) > 0
-            and _box_centered(res.boxes, w, h)
-        )
+        plant_present = (n_boxes > 0 and _box_centered(res.boxes, w, h))
 
         triggered = deb.update(plant_present)
 
@@ -362,8 +370,11 @@ def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = Tru
                 raise KeyboardInterrupt
 
         if triggered:
+            print(f"[DETECT] TRIGGERED after {frames_processed} frame(s) in {(time.time()-t0)*1000:.0f}ms")
             return True
 
+    elapsed = (time.time() - t0) * 1000
+    print(f"[DETECT] dwell done: {frames_processed} frame(s) in {elapsed:.0f}ms, no trigger")
     return False
 
 
