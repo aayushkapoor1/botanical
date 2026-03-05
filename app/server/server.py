@@ -468,7 +468,7 @@ def pump_off_sync() -> None:
 
 async def process_command(cmd_raw: str) -> str:
     """Handle movement / calibration / pump commands."""
-    global pending_direction, pump_in_progress, pump_start_time
+    global pending_direction, move_in_progress, pump_in_progress, pump_start_time
 
     if scan_in_progress:
         return "Scan in progress - controls locked"
