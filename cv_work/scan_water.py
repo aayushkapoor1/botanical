@@ -35,17 +35,17 @@ SERIAL_PORT = None
 # --- Scan grid ---
 # The raster scan will visit ROWS x COLS "cells".
 COLS = 9
-ROWS = 9
+ROWS = 6
 
 # Step size between cells in mm (the ESP converts mm to steps)
-STEP_X_MM = 50.0
-STEP_Y_MM = 50.0
+STEP_X_MM = 50
+STEP_Y_MM = 75.0
 
 # --- How long we sit and look at each cell ---
 DWELL_S = 0.4
 
 # --- Watering duration ---
-WATER_MS = 1000
+WATER_MS = 3000
 
 # --- Post-water skip ---
 # After watering a plant, skip this many cells forward to avoid rescanning it.
@@ -509,7 +509,6 @@ def run_scan(
 
                     skip = min(SKIP_CELLS_AFTER_WATER, len(cols) - ci - 1)
                     if skip > 0:
-                        report(f"[SCAN] Skipping {skip} cell(s) to clear plant")
                         cmd_move_xy(ser, x_step * skip, 0.0)
                         ci += skip
 
