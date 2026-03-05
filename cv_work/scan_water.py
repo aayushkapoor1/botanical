@@ -104,7 +104,7 @@ CROSSHAIR_RATIO = 0.25
 
 # Vertical offset for the crosshair center, as a fraction of frame height.
 # Positive = shift down. Adjust if the hose nozzle isn't aligned with frame center.
-CROSSHAIR_Y_OFFSET = 0.10
+CROSSHAIR_Y_OFFSET = 0.15
 
 
 # ============================================================
