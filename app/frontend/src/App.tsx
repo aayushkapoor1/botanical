@@ -216,7 +216,6 @@ function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const sendTimerRef = useRef<number | null>(null);
   const pumpHeldRef = useRef(false);
-  const statusRevertRef = useRef<number | null>(null);
   const [status, setStatus] = useState("Connecting…");
   const [activeTab, setActiveTab] = useState<"dashboard" | "calendar" | "settings">("dashboard");
   const [schedules, setSchedules] = useState<Record<DayKey, string[]>>(() =>
@@ -338,11 +337,6 @@ function App() {
           setPlantsFoundCount(0);
         }
 
-        setStatus(msg);
-        if (statusRevertRef.current) clearTimeout(statusRevertRef.current);
-        if (!msg.toLowerCase().includes("disconnect") && !msg.toLowerCase().includes("error")) {
-          statusRevertRef.current = window.setTimeout(() => setStatus("Connected"), 2000);
-        }
         return;
       }
       try {
@@ -625,9 +619,6 @@ function App() {
                 {waterAllState === "watering" && "Cancel scan"}
                 {waterAllState === "complete" && "Done!"}
               </button>
-              {waterAllState === "watering" && scanStatus && (
-                <span className="scan-progress">{scanStatus}</span>
-              )}
             </div>
           </div>
         </section>
