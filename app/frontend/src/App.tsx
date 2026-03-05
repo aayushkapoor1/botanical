@@ -834,10 +834,9 @@ function App() {
                     <div key={i} className="month-grid-header">{d}</div>
                   ))}
                   {getCalendarDays(calendarMonth.getFullYear(), calendarMonth.getMonth()).map(({ date, key, isCurrentMonth }) => {
-                    const dayKey = WEEKDAY_KEYS[new Date(key + "T12:00:00").getDay()];
-                    const startDate = scheduleStartDates[dayKey];
-                    const weeklyTimes = (startDate && key < startDate) ? [] : getWeeklyTimesForDate(key, schedules);
-                    const dateSpecific = dateEvents[key] ?? [];
+                    const isPast = key < todayKey;
+                    const weeklyTimes = isPast ? [] : getWeeklyTimesForDate(key, schedules);
+                    const dateSpecific = isPast ? [] : (dateEvents[key] ?? []);
                     const allTimes = Array.from(new Set([...weeklyTimes, ...dateSpecific])).sort();
                     const isSelected = selectedDate === key;
                     const isToday = isCurrentMonth &&
@@ -851,8 +850,7 @@ function App() {
                       return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
                     };
                     const wateredTimes = wateredDates[key] ?? [];
-                    const isPast = key < todayKey;
-                    const showAsWatered = wateredTimes.length > 0 || (isPast && allTimes.length > 0);
+                    const showAsWatered = wateredTimes.length > 0;
                     return (
                       <button
                         key={key}
@@ -876,16 +874,11 @@ function App() {
                           {allTimes.length > 3 && (
                             <span className="month-day-more">+{allTimes.length - 3}</span>
                           )}
-                          {showAsWatered && wateredTimes.length > 0 && wateredTimes.map((wt, wi) => (
+                          {wateredTimes.map((wt, wi) => (
                             <span key={wi} className="month-day-watered" title={`Watered at ${wt}`}>
                               {wt}
                             </span>
                           ))}
-                          {showAsWatered && wateredTimes.length === 0 && isPast && allTimes.length > 0 && (
-                            <span className="month-day-watered" title="Past (before today)">
-                              {formatTime(allTimes[0])}
-                            </span>
-                          )}
                         </div>
                       </button>
                     );
