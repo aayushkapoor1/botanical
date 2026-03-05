@@ -463,7 +463,7 @@ function App() {
             <button
               type="button"
               className="status-badge"
-              data-status={status.toLowerCase().includes("connect") ? "connected" : "disconnected"}
+              data-status={status === "Connected" ? "connected" : "disconnected"}
               onClick={handleStatusClick}
             >
               <span className="status-dot" />
