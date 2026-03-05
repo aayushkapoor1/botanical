@@ -246,7 +246,7 @@ def cmd_clear_fault(ser: serial.Serial):
 # CROSSHAIR (centre-point) CHECK
 # ============================================================
 
-def _box_centered(boxes, frame_w, frame_h):
+def _box_centered(boxes, frame_w, frame_h, log=False):
     """Return True if any bounding box's center falls inside the crosshair region."""
     half_w = frame_w * CROSSHAIR_RATIO / 2
     half_h = frame_h * CROSSHAIR_RATIO / 2
@@ -257,7 +257,15 @@ def _box_centered(boxes, frame_w, frame_h):
         x1, y1, x2, y2 = box[:4]
         box_cx = (x1 + x2) / 2
         box_cy = (y1 + y2) / 2
-        if abs(box_cx - fcx) <= half_w and abs(box_cy - fcy) <= half_h:
+        dx = abs(box_cx - fcx)
+        dy = abs(box_cy - fcy)
+        inside = dx <= half_w and dy <= half_h
+        if log:
+            print(f"[CROSSHAIR] box_center=({box_cx:.0f},{box_cy:.0f}) "
+                  f"crosshair_center=({fcx:.0f},{fcy:.0f}) "
+                  f"dx={dx:.0f}/{half_w:.0f} dy={dy:.0f}/{half_h:.0f} "
+                  f"{'HIT' if inside else 'MISS'}")
+        if inside:
             return True
     return False
 
@@ -334,7 +342,8 @@ def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = Tru
         n_boxes = len(res.boxes) if res.boxes is not None else 0
         if n_boxes > 0:
             confs = [float(b.conf[0]) for b in res.boxes]
-            centered = _box_centered(res.boxes, frame.shape[1], frame.shape[0])
+            log_positions = (frames_processed == 1)
+            centered = _box_centered(res.boxes, frame.shape[1], frame.shape[0], log=log_positions)
             print(f"[DETECT] {n_boxes} box(es) conf={confs} centered={centered} ({infer_ms:.0f}ms)")
         else:
             print(f"[DETECT] no boxes ({infer_ms:.0f}ms)")
