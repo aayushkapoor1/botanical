@@ -48,8 +48,6 @@ GANTRY_MAX_Y_MM = 400.0  # travel limit on Y axis
 
 FRONTEND_BUILD_DIR = Path(__file__).resolve().parent.parent / "frontend" / "build"
 
-CAPTURES_DIR = Path(__file__).resolve().parent.parent.parent / "captures"
-CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
 # ────────────────────────────────────────────────────────────
 
 # ──────────────── Scanning support (import cv_work) ─────────
@@ -838,19 +836,6 @@ async def handle_connection(websocket) -> None:
                     await websocket.send("Cancelling scan...")
                 else:
                     await websocket.send("No scan running")
-
-            elif prefix == "CAPTURE":
-                ok, frame = cam.read()
-                if not ok or frame is None:
-                    await websocket.send("CAPTURE_FAIL No camera frame available")
-                else:
-                    if SCAN_AVAILABLE:
-                        frame = _scan_module.digital_zoom(frame, _scan_module.ZOOM)
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                    filepath = CAPTURES_DIR / f"capture_{ts}.jpg"
-                    cv2.imwrite(str(filepath), frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
-                    print(f"[CAPTURE] Saved {filepath}")
-                    await websocket.send(f"CAPTURE_OK {filepath.name}")
 
             else:
                 response = await process_command(raw)

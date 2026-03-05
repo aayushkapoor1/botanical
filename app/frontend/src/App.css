@@ -1012,51 +1012,6 @@ button.status-badge {
   align-items: flex-start;
 }
 
-.capture-btn {
-  padding: 0.55rem 1.1rem;
-  border: none;
-  border-radius: var(--radius-md);
-  background: var(--color-accent-soft);
-  color: var(--color-primary);
-  font-family: inherit;
-  font-size: 0.9rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background var(--transition), transform var(--transition);
-}
-
-.capture-btn:hover:not(:disabled) {
-  background: #b8ddb8;
-}
-
-.capture-btn:active:not(:disabled) {
-  transform: scale(0.97);
-}
-
-.capture-btn--active {
-  background: #dcfce7;
-  color: var(--color-status-connected);
-  cursor: default;
-}
-
-.capture-btn:disabled {
-  opacity: 0.85;
-}
-
-.capture-flash-overlay {
-  position: absolute;
-  inset: 0;
-  background: white;
-  border-radius: inherit;
-  animation: capture-flash 0.4s ease-out forwards;
-  pointer-events: none;
-  z-index: 10;
-}
-
-@keyframes capture-flash {
-  0%   { opacity: 0.85; }
-  100% { opacity: 0; }
-}
 
 /* ─── Scan side panel ─────────────────────────────── */
 

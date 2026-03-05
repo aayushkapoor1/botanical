@@ -236,7 +236,6 @@ function App() {
     last_watered: null,
     total_ml_watered: 0,
   });
-  const [captureFlash, setCaptureFlash] = useState<"idle" | "saving" | "done">("idle");
   const [debugMode, setDebugMode] = useState(false);
   const [mockCurrentDate, setMockCurrentDate] = useState<string | null>(null);
   const statusClickCountRef = useRef(0);
@@ -314,15 +313,6 @@ function App() {
           return;
         }
 
-        if (msg.startsWith("CAPTURE_OK")) {
-          setCaptureFlash("done");
-          setTimeout(() => setCaptureFlash("idle"), 1500);
-          return;
-        }
-        if (msg.startsWith("CAPTURE_FAIL")) {
-          setCaptureFlash("idle");
-          return;
-        }
 
         if (msg.startsWith("[SCAN]")) {
           const scanMsg = msg.replace(/^\[SCAN]\s*/, "");
@@ -536,25 +526,7 @@ function App() {
                 {plantFoundFlash && (
                   <div className="plant-found-overlay">Plant Found!</div>
                 )}
-                {captureFlash === "done" && (
-                  <div className="capture-flash-overlay" />
-                )}
               </div>
-              <button
-                className={`capture-btn ${captureFlash !== "idle" ? "capture-btn--active" : ""}`}
-                disabled={captureFlash !== "idle"}
-                onClick={() => {
-                  const sock = socketRef.current;
-                  if (sock && sock.readyState === WebSocket.OPEN) {
-                    setCaptureFlash("saving");
-                    sock.send("CAPTURE");
-                  }
-                }}
-              >
-                {captureFlash === "idle" && "Capture Frame"}
-                {captureFlash === "saving" && "Saving..."}
-                {captureFlash === "done" && "Saved!"}
-              </button>
             </div>
             {waterAllState === "watering" && (
               <div className="scan-side-panel">
