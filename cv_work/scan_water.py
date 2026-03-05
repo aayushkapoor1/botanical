@@ -63,9 +63,22 @@ if os.path.exists(_FINE_TUNED_PT):
     MODEL_LABEL = "Plant Model (PyTorch best.pt)"
     POTTED_PLANT_CLASS = 0  # fine-tuned: single class "plant"
 elif os.path.exists(_NCNN_PARAM) and os.path.exists(_NCNN_BIN):
-    MODEL_NAME = _PLANT_MODEL_DIR  # Ultralytics YOLO loads NCNN from directory
-    MODEL_LABEL = "Plant Model (NCNN)"
-    POTTED_PLANT_CLASS = 0  # fine-tuned: single class "plant"
+    # Ultralytics only detects NCNN when path name contains "_ncnn_model". Use a symlink.
+    _parent = os.path.dirname(_PLANT_MODEL_DIR)
+    _ncnn_link = os.path.join(_parent, "Plant Model_ncnn_model")
+    if not os.path.exists(_ncnn_link):
+        try:
+            os.symlink(os.path.basename(_PLANT_MODEL_DIR), _ncnn_link)
+        except OSError:
+            pass
+    if os.path.exists(_ncnn_link):
+        MODEL_NAME = os.path.abspath(_ncnn_link)
+        MODEL_LABEL = "Plant Model (NCNN)"
+        POTTED_PLANT_CLASS = 0  # fine-tuned: single class "plant"
+    else:
+        MODEL_NAME = "yolov8n.pt"
+        MODEL_LABEL = "COCO yolov8n.pt (NCNN present but symlink failed; rename folder to 'Plant Model_ncnn_model')"
+        POTTED_PLANT_CLASS = 58
 else:
     MODEL_NAME = "yolov8n.pt"
     MODEL_LABEL = "COCO yolov8n.pt"
