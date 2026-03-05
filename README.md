@@ -23,7 +23,7 @@ Automated plant care system using a gantry-mounted camera and watering pump, con
 ### 1. SSH into the Pi
 
 ```
-ssh aayushkapoor@10.40.227.209
+ssh aayushkapoor@172.20.10.12
 ```
 
 ### 2. Start the Cloudflare Tunnel (Terminal 1)
