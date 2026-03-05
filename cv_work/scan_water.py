@@ -1,3 +1,4 @@
+import os
 import time
 import glob
 import serial
@@ -51,8 +52,24 @@ WATER_MS = 1000
 SKIP_CELLS_AFTER_WATER = 2
 
 # --- YOLO model settings ---
-MODEL_NAME = "yolov8n.pt"
-POTTED_PLANT_CLASS = 58
+# Prefer fine-tuned plant model: .pt weights, or NCNN export (model.ncnn.param/.bin) in Plant Model/.
+_CV_DIR = os.path.dirname(os.path.abspath(__file__))
+_PLANT_MODEL_DIR = os.path.normpath(os.path.join(_CV_DIR, "..", "Plant Model"))
+_FINE_TUNED_PT = os.path.join(_PLANT_MODEL_DIR, "best.pt")
+_NCNN_PARAM = os.path.join(_PLANT_MODEL_DIR, "model.ncnn.param")
+_NCNN_BIN = os.path.join(_PLANT_MODEL_DIR, "model.ncnn.bin")
+if os.path.exists(_FINE_TUNED_PT):
+    MODEL_NAME = _FINE_TUNED_PT
+    MODEL_LABEL = "Plant Model (PyTorch best.pt)"
+    POTTED_PLANT_CLASS = 0  # fine-tuned: single class "plant"
+elif os.path.exists(_NCNN_PARAM) and os.path.exists(_NCNN_BIN):
+    MODEL_NAME = _PLANT_MODEL_DIR  # Ultralytics YOLO loads NCNN from directory
+    MODEL_LABEL = "Plant Model (NCNN)"
+    POTTED_PLANT_CLASS = 0  # fine-tuned: single class "plant"
+else:
+    MODEL_NAME = "yolov8n.pt"
+    MODEL_LABEL = "COCO yolov8n.pt"
+    POTTED_PLANT_CLASS = 58  # COCO "potted plant"
 CONF_THRES = 0.275
 
 # --- Digital zoom (1.0 = no zoom, 2.0 = 2x center crop, etc.) ---
@@ -461,6 +478,7 @@ def main():
         print("[ESP]", ln)
 
     model = YOLO(MODEL_NAME)
+    print(f"[SCAN] Using model: {MODEL_LABEL}")
 
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():

@@ -64,10 +64,10 @@ try:
     import cv_work.scan_water as _scan_module
     from ultralytics import YOLO
 
-    _model_path = os.path.join(PROJECT_ROOT, 'cv_work', 'yolov8n.pt')
-    model = YOLO(_model_path) if os.path.exists(_model_path) else YOLO("yolov8n.pt")
+    # Use same model as scan_water (fine-tuned Plant Model or yolov8n.pt)
+    model = YOLO(_scan_module.MODEL_NAME)
     SCAN_AVAILABLE = True
-    print(f"[INIT] YOLO model loaded — scanning available")
+    print(f"[INIT] YOLO model loaded: {_scan_module.MODEL_LABEL} — scanning available")
 except ImportError as e:
     print(f"[INIT] Scanning not available ({e}). Manual controls still work.")
     _raw_cmd_move_xy = None

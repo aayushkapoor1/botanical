@@ -1,12 +1,23 @@
+import os
 import cv2
 import time
 from ultralytics import YOLO
 
-# Load pretrained COCO detector (auto-downloads weights on first run)
-model = YOLO("yolov8n.pt")  # or "yolo11n.pt" if that's what you have installed
-
-# 58 is the potted plant class. I don't think this is trained on topdown views particularly
-POTTED_PLANT_CLASS = 58     # Ultralytics COCO: "potted plant" :contentReference[oaicite:2]{index=2}
+# Prefer fine-tuned plant model: Plant Model/best.pt or NCNN (model.ncnn.param/.bin), else COCO
+_cv_dir = os.path.dirname(os.path.abspath(__file__))
+_plant_model_dir = os.path.normpath(os.path.join(_cv_dir, "..", "Plant Model"))
+_fine_tuned_pt = os.path.join(_plant_model_dir, "best.pt")
+_ncnn_param = os.path.join(_plant_model_dir, "model.ncnn.param")
+_ncnn_bin = os.path.join(_plant_model_dir, "model.ncnn.bin")
+if os.path.exists(_fine_tuned_pt):
+    model = YOLO(_fine_tuned_pt)
+    POTTED_PLANT_CLASS = 0
+elif os.path.exists(_ncnn_param) and os.path.exists(_ncnn_bin):
+    model = YOLO(_plant_model_dir)  # Ultralytics loads NCNN from directory
+    POTTED_PLANT_CLASS = 0
+else:
+    model = YOLO("yolov8n.pt")
+    POTTED_PLANT_CLASS = 58
 CONF_THRES = 0.35
 
 # Debounce parameters
