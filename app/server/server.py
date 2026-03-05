@@ -394,7 +394,6 @@ async def execute_move(direction: str) -> None:
     """Run jog moves in a thread, chaining consecutive moves while
     the user keeps holding a direction button."""
     global move_in_progress, pending_direction
-    move_in_progress = True
     pending_direction = None
     loop = asyncio.get_running_loop()
 
@@ -403,10 +402,9 @@ async def execute_move(direction: str) -> None:
             x, y = DIRECTION_MAP[direction]
             await loop.run_in_executor(None, cmd_move_xy, ser, x, y)
 
-            # Clear stale commands, then wait longer than the frontend's
-            # 100ms send interval.  If a fresh command arrives in that
-            # window the user is still holding → chain.  Otherwise → stop.
-            pending_direction = None
+            # Wait longer than the frontend's 100ms send interval.
+            # If a command arrives in this window the user is still
+            # holding → chain to the next move.  Otherwise → stop.
             await asyncio.sleep(0.15)
 
             if pending_direction is not None:
@@ -486,6 +484,7 @@ async def process_command(cmd_raw: str) -> str:
         if move_in_progress:
             pending_direction = cmd
             return "Moving..."
+        move_in_progress = True
         asyncio.create_task(execute_move(cmd))
         return f"Moving {cmd.lower()}..."
 
