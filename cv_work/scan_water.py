@@ -489,9 +489,8 @@ def run_scan(
                         cmd_move_xy(ser, 0.0, STEP_Y_MM)
 
                 cells_scanned += 1
-                report(
-                    f"[SCAN] Checking cell ({r},{c}) [{cells_scanned}/{total_cells}]"
-                )
+                pct = int(cells_scanned / total_cells * 100)
+                report(f"[SCAN] Scanning… {pct}%")
 
                 found = detect_plant_for_duration(
                     cap,
