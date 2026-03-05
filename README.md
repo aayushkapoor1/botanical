@@ -50,6 +50,10 @@ The server starts on port 8000, serving the React build and the WebSocket API.
 
 Open **https://pi.botanical.live/** in a browser.
 
+## Fine-tuned plant model
+
+To use your own fine-tuned YOLO model instead of the default COCO detector, place the PyTorch weights in **`Plant Model/best.pt`**. The app looks for that file first; if it exists, it uses class index 0 (plant) and skips the COCO “potted plant” class. You can use your **NCNN export** as-is: put `model.ncnn.param` and `model.ncnn.bin` in `Plant Model/` and the app will load it (no `.pt` needed). Alternatively put `best.pt` there; if both exist, `best.pt` is used first.
+
 ## Project Structure
 
 ```
@@ -62,6 +66,7 @@ botanical/
 │   ├── client/
 │   │   └── client.py    # Python WebSocket test client
 │   └── requirements.txt
+├── Plant Model/         # Optional: fine-tuned model (model.ncnn.param/.bin or best.pt)
 ├── cv_work/
 │   ├── scan_water.py    # Scan-and-water CV pipeline
 │   ├── opencv_detection.py

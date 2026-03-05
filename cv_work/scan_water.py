@@ -1,16 +1,17 @@
+import os
 import time
 import glob
 import serial
 import cv2
 from ultralytics import YOLO
 
-# Plug the esp into the pi with usb 
+# Plug the esp into the pi with usb
 # wire everything
 # make sure pump pin is set up
 
 # upload the ino onto the arduino
 
-# set up python environment on the pi 
+# set up python environment on the pi
 # python3 -m venv venv
 # source venv/bin/activate
 # pip install pyserial opencv-python ultralytics
@@ -34,11 +35,11 @@ SERIAL_PORT = None
 # --- Scan grid ---
 # The raster scan will visit ROWS x COLS "cells".
 COLS = 9
-ROWS = 9
+ROWS = 5
 
 # Step size between cells in mm (the ESP converts mm to steps)
 STEP_X_MM = 50.0
-STEP_Y_MM = 50.0
+STEP_Y_MM = 100.0
 
 # --- How long we sit and look at each cell ---
 DWELL_S = 0.4
@@ -51,8 +52,33 @@ WATER_MS = 1000
 SKIP_CELLS_AFTER_WATER = 2
 
 # --- YOLO model settings ---
-MODEL_NAME = "yolov8n.pt"
-POTTED_PLANT_CLASS = 58
+# Prefer fine-tuned plant model: .pt weights, or NCNN export (model.ncnn.param/.bin) in Plant Model/.
+_CV_DIR = os.path.dirname(os.path.abspath(__file__))
+_PLANT_MODEL_DIR = os.path.normpath(os.path.join(_CV_DIR, "..", "Plant Model"))
+_NCNN_PARAM = os.path.join(_PLANT_MODEL_DIR, "model.ncnn.param")
+_NCNN_BIN = os.path.join(_PLANT_MODEL_DIR, "model.ncnn.bin")
+
+if os.path.exists(_NCNN_PARAM) and os.path.exists(_NCNN_BIN):
+    # Ultralytics only detects NCNN when path name contains "_ncnn_model". Use a symlink.
+    _parent = os.path.dirname(_PLANT_MODEL_DIR)
+    _ncnn_link = os.path.join(_parent, "Plant Model_ncnn_model")
+    if not os.path.exists(_ncnn_link):
+        try:
+            os.symlink(os.path.basename(_PLANT_MODEL_DIR), _ncnn_link)
+        except OSError:
+            pass
+    if os.path.exists(_ncnn_link):
+        MODEL_NAME = os.path.abspath(_ncnn_link)
+        MODEL_LABEL = "Plant Model (NCNN)"
+        POTTED_PLANT_CLASS = 0  # fine-tuned: single class "plant"
+    else:
+        MODEL_NAME = "yolov8n.pt"
+        MODEL_LABEL = "COCO yolov8n.pt (NCNN present but symlink failed; rename folder to 'Plant Model_ncnn_model')"
+        POTTED_PLANT_CLASS = 58
+else:
+    MODEL_NAME = "yolov8n.pt"
+    MODEL_LABEL = "COCO yolov8n.pt"
+    POTTED_PLANT_CLASS = 58  # COCO "potted plant"
 CONF_THRES = 0.275
 
 # --- Digital zoom (1.0 = no zoom, 2.0 = 2x center crop, etc.) ---
@@ -85,19 +111,21 @@ CROSSHAIR_Y_OFFSET = 0.20
 # DIGITAL ZOOM
 # ============================================================
 
+
 def digital_zoom(frame, zoom=1.0):
     if zoom <= 1.0:
         return frame
     h, w = frame.shape[:2]
     new_w, new_h = int(w / zoom), int(h / zoom)
     x1, y1 = (w - new_w) // 2, (h - new_h) // 2
-    crop = frame[y1:y1 + new_h, x1:x1 + new_w]
+    crop = frame[y1 : y1 + new_h, x1 : x1 + new_w]
     return cv2.resize(crop, (w, h), interpolation=cv2.INTER_LINEAR)
 
 
 # ============================================================
 # SERIAL UTILITIES
 # ============================================================
+
 
 def autodetect_port():
     """
@@ -172,6 +200,7 @@ def wait_for(ser: serial.Serial, predicate, timeout_s: float, label: str):
 # HIGH-LEVEL COMMANDS (MOVE + PUMP)
 # ============================================================
 
+
 def cmd_move_xy(ser: serial.Serial, x_mm: float, y_mm: float):
     """
     Command a movement on ESP and wait until it completes.
@@ -207,7 +236,12 @@ def cmd_clear_fault(ser: serial.Serial):
     Clear a limit fault (only works if the limit switch is released).
     """
     send_line(ser, "CLEAR")
-    ln = wait_for(ser, lambda ln: ln.startswith("OK") or ln.startswith("ERR"), 1.0, "CLEAR response")
+    ln = wait_for(
+        ser,
+        lambda ln: ln.startswith("OK") or ln.startswith("ERR"),
+        1.0,
+        "CLEAR response",
+    )
     if ln.startswith("ERR"):
         raise RuntimeError(f"[ESP ERROR] {ln}")
 
@@ -216,7 +250,8 @@ def cmd_clear_fault(ser: serial.Serial):
 # CROSSHAIR (centre-point) CHECK
 # ============================================================
 
-def _box_centered(boxes, frame_w, frame_h):
+
+def _box_centered(boxes, frame_w, frame_h, log=False):
     """Return True if any bounding box's center falls inside the crosshair region."""
     half_w = frame_w * CROSSHAIR_RATIO / 2
     half_h = frame_h * CROSSHAIR_RATIO / 2
@@ -227,7 +262,17 @@ def _box_centered(boxes, frame_w, frame_h):
         x1, y1, x2, y2 = box[:4]
         box_cx = (x1 + x2) / 2
         box_cy = (y1 + y2) / 2
-        if abs(box_cx - fcx) <= half_w and abs(box_cy - fcy) <= half_h:
+        dx = abs(box_cx - fcx)
+        dy = abs(box_cy - fcy)
+        inside = dx <= half_w and dy <= half_h
+        if log:
+            print(
+                f"[CROSSHAIR] box_center=({box_cx:.0f},{box_cy:.0f}) "
+                f"crosshair_center=({fcx:.0f},{fcy:.0f}) "
+                f"dx={dx:.0f}/{half_w:.0f} dy={dy:.0f}/{half_h:.0f} "
+                f"{'HIT' if inside else 'MISS'}"
+            )
+        if inside:
             return True
     return False
 
@@ -236,16 +281,18 @@ def _box_centered(boxes, frame_w, frame_h):
 # VISION DEBOUNCING
 # ============================================================
 
+
 class PlantDebouncer:
     """
     Converts noisy per-frame detections into a clean event:
       - returns True only on a stable OFF->ON transition ("new plant found").
     """
+
     def __init__(self):
-        self.state_on = False     # debounced state: plant is present or not
-        self.hit_count = 0        # consecutive frames with detection
-        self.miss_count = 0       # consecutive frames without detection
-        self.last_trigger = 0.0   # time of last trigger (cooldown)
+        self.state_on = False  # debounced state: plant is present or not
+        self.hit_count = 0  # consecutive frames with detection
+        self.miss_count = 0  # consecutive frames without detection
+        self.last_trigger = 0.0  # time of last trigger (cooldown)
 
     def update(self, plant_present: bool) -> bool:
         """
@@ -274,8 +321,14 @@ class PlantDebouncer:
         return False
 
 
-def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = True,
-                              frame_callback=None, box_callback=None) -> bool:
+def detect_plant_for_duration(
+    cap,
+    model,
+    duration_s: float,
+    show_ui: bool = True,
+    frame_callback=None,
+    box_callback=None,
+) -> bool:
     """
     Look at camera frames for duration_s seconds.
     Returns True if a debounced "new plant found" happens during that window.
@@ -284,6 +337,7 @@ def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = Tru
     """
     deb = PlantDebouncer()
     t0 = time.time()
+    frames_processed = 0
 
     while time.time() - t0 < duration_s:
         ok, frame = cap.read()
@@ -295,11 +349,29 @@ def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = Tru
         if frame_callback:
             frame_callback(frame)
 
-        res = model.predict(frame, conf=CONF_THRES, classes=[POTTED_PLANT_CLASS], verbose=False)[0]
+        infer_start = time.time()
+        res = model.predict(
+            frame, conf=CONF_THRES, classes=[POTTED_PLANT_CLASS], verbose=False
+        )[0]
+        infer_ms = (time.time() - infer_start) * 1000
+        frames_processed += 1
+
+        n_boxes = len(res.boxes) if res.boxes is not None else 0
+        if n_boxes > 0:
+            confs = [float(b.conf[0]) for b in res.boxes]
+            log_positions = frames_processed == 1
+            centered = _box_centered(
+                res.boxes, frame.shape[1], frame.shape[0], log=log_positions
+            )
+            print(
+                f"[DETECT] {n_boxes} box(es) conf={confs} centered={centered} ({infer_ms:.0f}ms)"
+            )
+        else:
+            print(f"[DETECT] no boxes ({infer_ms:.0f}ms)")
 
         if box_callback:
             boxes_out = []
-            if res.boxes is not None and len(res.boxes) > 0:
+            if n_boxes > 0:
                 for box in res.boxes:
                     xyxy = box.xyxy[0].tolist()
                     conf = float(box.conf[0])
@@ -307,11 +379,7 @@ def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = Tru
             box_callback(boxes_out)
 
         h, w = frame.shape[:2]
-        plant_present = (
-            res.boxes is not None
-            and len(res.boxes) > 0
-            and _box_centered(res.boxes, w, h)
-        )
+        plant_present = n_boxes > 0 and _box_centered(res.boxes, w, h)
 
         triggered = deb.update(plant_present)
 
@@ -332,8 +400,15 @@ def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = Tru
                 raise KeyboardInterrupt
 
         if triggered:
+            print(
+                f"[DETECT] TRIGGERED after {frames_processed} frame(s) in {(time.time()-t0)*1000:.0f}ms"
+            )
             return True
 
+    elapsed = (time.time() - t0) * 1000
+    print(
+        f"[DETECT] dwell done: {frames_processed} frame(s) in {elapsed:.0f}ms, no trigger"
+    )
     return False
 
 
@@ -341,8 +416,16 @@ def detect_plant_for_duration(cap, model, duration_s: float, show_ui: bool = Tru
 # MAIN SCANNING LOGIC (RASTER / SNAKE PATTERN)
 # ============================================================
 
-def run_scan(ser, cap, model, progress_callback=None, cancel_event=None,
-             frame_callback=None, box_callback=None):
+
+def run_scan(
+    ser,
+    cap,
+    model,
+    progress_callback=None,
+    cancel_event=None,
+    frame_callback=None,
+    box_callback=None,
+):
     """
     Execute the full raster scan, detecting and watering plants.
 
@@ -406,11 +489,18 @@ def run_scan(ser, cap, model, progress_callback=None, cancel_event=None,
                         cmd_move_xy(ser, 0.0, STEP_Y_MM)
 
                 cells_scanned += 1
-                report(f"[SCAN] Checking cell ({r},{c}) [{cells_scanned}/{total_cells}]")
+                report(
+                    f"[SCAN] Checking cell ({r},{c}) [{cells_scanned}/{total_cells}]"
+                )
 
-                found = detect_plant_for_duration(cap, model, DWELL_S, show_ui=False,
-                                                  frame_callback=frame_callback,
-                                                  box_callback=box_callback)
+                found = detect_plant_for_duration(
+                    cap,
+                    model,
+                    DWELL_S,
+                    show_ui=False,
+                    frame_callback=frame_callback,
+                    box_callback=box_callback,
+                )
 
                 if found:
                     plants_found += 1
@@ -432,7 +522,9 @@ def run_scan(ser, cap, model, progress_callback=None, cancel_event=None,
         if cancelled:
             report("[SCAN] Cancelled by user")
         else:
-            report(f"[SCAN] Finished - watered {plants_found} out of {cells_scanned} cells")
+            report(
+                f"[SCAN] Finished - watered {plants_found} out of {cells_scanned} cells"
+            )
 
         return {
             "cells_scanned": cells_scanned,
@@ -461,6 +553,7 @@ def main():
         print("[ESP]", ln)
 
     model = YOLO(MODEL_NAME)
+    print(f"[SCAN] Using model: {MODEL_LABEL}")
 
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():

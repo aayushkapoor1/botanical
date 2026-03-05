@@ -47,6 +47,9 @@ GANTRY_MAX_X_MM = 400.0  # travel limit on X axis
 GANTRY_MAX_Y_MM = 400.0  # travel limit on Y axis
 
 FRONTEND_BUILD_DIR = Path(__file__).resolve().parent.parent / "frontend" / "build"
+
+CAPTURES_DIR = Path(__file__).resolve().parent.parent.parent / "captures"
+CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
 # ────────────────────────────────────────────────────────────
 
 # ──────────────── Scanning support (import cv_work) ─────────
@@ -61,10 +64,10 @@ try:
     import cv_work.scan_water as _scan_module
     from ultralytics import YOLO
 
-    _model_path = os.path.join(PROJECT_ROOT, 'cv_work', 'yolov8n.pt')
-    model = YOLO(_model_path) if os.path.exists(_model_path) else YOLO("yolov8n.pt")
+    # Use same model as scan_water (fine-tuned Plant Model or yolov8n.pt)
+    model = YOLO(_scan_module.MODEL_NAME)
     SCAN_AVAILABLE = True
-    print(f"[INIT] YOLO model loaded — scanning available")
+    print(f"[INIT] YOLO model loaded: {_scan_module.MODEL_LABEL} — scanning available")
 except ImportError as e:
     print(f"[INIT] Scanning not available ({e}). Manual controls still work.")
     _raw_cmd_move_xy = None
@@ -833,6 +836,19 @@ async def handle_connection(websocket) -> None:
                     await websocket.send("Cancelling scan...")
                 else:
                     await websocket.send("No scan running")
+
+            elif prefix == "CAPTURE":
+                ok, frame = cam.read()
+                if not ok or frame is None:
+                    await websocket.send("CAPTURE_FAIL No camera frame available")
+                else:
+                    if SCAN_AVAILABLE:
+                        frame = _scan_module.digital_zoom(frame, _scan_module.ZOOM)
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                    filepath = CAPTURES_DIR / f"capture_{ts}.jpg"
+                    cv2.imwrite(str(filepath), frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                    print(f"[CAPTURE] Saved {filepath}")
+                    await websocket.send(f"CAPTURE_OK {filepath.name}")
 
             else:
                 response = await process_command(raw)

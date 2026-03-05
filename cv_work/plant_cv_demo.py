@@ -2,11 +2,10 @@ import cv2
 import time
 from ultralytics import YOLO
 
-# Load pretrained COCO detector (auto-downloads weights on first run)
-model = YOLO("yolov8n.pt")  # or "yolo11n.pt" if that's what you have installed
+# Use same model as scan_water (handles best.pt, NCNN symlink, or yolov8n.pt)
+from cv_work.scan_water import MODEL_NAME, POTTED_PLANT_CLASS
 
-# 58 is the potted plant class. I don't think this is trained on topdown views particularly
-POTTED_PLANT_CLASS = 58     # Ultralytics COCO: "potted plant" :contentReference[oaicite:2]{index=2}
+model = YOLO(MODEL_NAME)
 CONF_THRES = 0.35
 
 # Debounce parameters
