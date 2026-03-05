@@ -100,7 +100,7 @@ COOLDOWN_S = 1.5
 # Fraction of frame dimensions defining the central crosshair box.
 # A bbox only counts if its center falls inside this region.
 # 0.25 = center 25% of width and height.
-CROSSHAIR_RATIO = 0.30
+CROSSHAIR_RATIO = 0.25
 
 # Vertical offset for the crosshair center, as a fraction of frame height.
 # Positive = shift down. Adjust if the hose nozzle isn't aligned with frame center.
