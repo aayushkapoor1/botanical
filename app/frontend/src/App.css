@@ -37,7 +37,7 @@ body {
   --color-water-muted: #e3f0fa;
 
   --color-status-connected: #22a55a;
-  --color-status-disconnected: #9ca3af;
+  --color-status-disconnected: #dc2626;
 
   --radius-sm: 8px;
   --radius-md: 12px;
@@ -107,6 +107,7 @@ body {
 
 .status-badge[data-status="disconnected"] {
   color: var(--color-status-disconnected);
+  background: #fee2e2;
 }
 
 .status-dot {
