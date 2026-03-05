@@ -315,12 +315,16 @@ function App() {
 
         if (msg.startsWith("[SCAN]")) {
           const scanMsg = msg.replace(/^\[SCAN]\s*/, "");
-          setScanStatus(scanMsg);
+          const scanMsgLower = scanMsg.toLowerCase();
 
-          if (scanMsg.toLowerCase().includes("plant found")) {
+          if (scanMsgLower.includes("plant found")) {
             setPlantsFoundCount((c) => c + 1);
             setPlantFoundFlash(true);
             setTimeout(() => setPlantFoundFlash(false), 2000);
+            // Do not show the verbose "plant found" movement message in the UI
+            // to avoid the confusing extra statement during Water all plants.
+          } else {
+            setScanStatus(scanMsg);
           }
         }
 
